@@ -3,8 +3,9 @@
 
 核心期望: 定页只看点色指纹(2ms/轮); 只有 act_needs_ocr=True 的页面才裁 ROI 跑 OCR,
           战斗/大厅/结算/开箱等纯点色页整轮零 OCR; 画面无大变化时复用上一帧 OCR 缓存。
-          现在只剩 chest_info(价格护栏)/ad_popup/claim_popup 三页还要读字 ——
-          缓存复用与 reset() 作废这两个护栏只能拿它们验, 所以场景2/6 用的是宝箱面板。
+          2026-09-03 定案后连 chest_info(价格护栏)也改成纯点色 —— 只剩 ad_popup/claim_popup
+          两页还要读字, 而它们没有指纹(只能靠 OCR 认页, 走的是 force 全图那条路),
+          所以"缓存复用 / reset() 作废"这两个护栏改成直接问 Vision(场景6b)。
 """
 import logging, os, sys
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -94,14 +95,14 @@ print(f'[1] 大厅帧1: page={p1.name} acted={a1} ocr={o1} / 帧2: page={p2.name
 check(p1.name == 'lobby' and a1 and not o1, '大厅帧1: 点色定页 + 点色认宝箱槽/对战按钮, 整轮零 OCR')
 check(p2.name == 'lobby' and not o2, '大厅帧2: 依旧零 OCR(旧版这里每帧都要 ROI OCR 369ms)')
 
-# ---------- 场景2: 宝箱弹窗(唯一还依赖 OCR 的动作: 价格护栏) + 两帧缓存复用 ----------
+# ---------- 场景2: 宝箱面板(价格护栏)也纯点色了 —— 两帧都必须零 OCR ----------
 QUEUE[:] = ['shots/chestinfo.png', 'shots/chestinfo.png']
 p3, a3, o3 = run('chest')
 p3b, a3b, o3b = run('chest2')
 print(f'[2] 宝箱面板帧1/2: page={p3.name}/{p3b.name} acted={a3}/{a3b} ocr={o3}/{o3b}')
-check(p3.name == 'chest_info' and o3, '宝箱面板: 指纹定页 + 读价格(护栏依赖 OCR)')
-check(p3b.name == 'chest_info' and not o3b,
-      '宝箱面板帧2: 画面没大变化也没到 ocr_gap -> 复用缓存不 OCR')
+check(p3.name == 'chest_info' and a3 and not o3,
+      '宝箱面板: 指纹定页 + 点色判免费按钮(旧版这里每帧一次 ROI OCR 369ms)')
+check(p3b.name == 'chest_info' and not o3b, '宝箱面板帧2: 依旧零 OCR')
 
 # ---------- 场景3: 战斗页整轮零 OCR(点色扫描) ----------
 app._act_gap = 0
@@ -133,12 +134,54 @@ p7, a7, o7 = run('result')
 print(f'[5] 结算页: page={p7.name} acted={a7} ocr={o7}')
 check(p7.name == 'result' and a7 and not o7, '结算页: 指纹定页 + 点色认[继续]按钮, 整轮零 OCR')
 
-# ---------- 场景6: vision.reset() 后 OCR 缓存必须作废(大厅已零 OCR, 只能用宝箱面板验) ----------
-QUEUE[:] = ['shots/chestinfo.png']
+# ---------- 场景6: 点色全表零命中 -> 先白等一帧, 连着第2帧才允许花一次全图 OCR ----------
+# 2026-09-03 真机 03:54: 战斗页被爆炸动画盖住指纹 -> 那一帧零命中 -> 白烧 675ms 全图 OCR
+# 还判成 unknown; 下一帧就恢复全中了。动画帧不会连着两帧长得一样, 所以第 1 帧只等不动。
+QUEUE[:] = ['shots/other_quest_0022.png'] * 2
 app.vision.reset()
-p8, a8, o8 = run('chest_again')
-print(f'[6] reset 后宝箱面板: page={p8.name} acted={a8} ocr={o8}')
-check(p8.name == 'chest_info' and o8, 'reset() 后首帧重新 OCR —— 旧缓存不能跨窗口尺寸复用')
+p8a, a8a, o8a = run('other_no_print_1')
+p8, a8, o8 = run('other_no_print_2')
+print(f'[6] 无指纹帧: 帧1 page={p8a} ocr={o8a} / 帧2 page={p8.name} acted={a8} ocr={o8}')
+check(p8a is None and not o8a,
+      '零命中第1帧: 白等一轮(可能是动画帧), 不动作也不花 OCR')
+check(p8.name == 'unknown' and o8,
+      '连着第2帧仍零命中 -> 才是真没标指纹的页(侧页/改版), 走 OCR 兜底')
+
+# ---------- 场景6b: OCR 缓存复用 + reset() 作废(纯点色后 step() 走不到这条路, 直接问 Vision) ----------
+one = Image.open(os.path.join(D, 'shots/other_quest_0022.png')).convert('RGB')
+v = app.vision
+ROI = (0.0, 0.1, 1.0, 0.9)
+v.changed_big = False
+_c1, r_cache = v.ocr(one, region=None, scale=0.5, min_gap=999)
+_c2, r_roi = v.ocr(one, region=ROI, scale=0.5, min_gap=999)
+v.reset()
+_c3, r_reset = v.ocr(one, region=ROI, scale=0.5, min_gap=999)
+print(f'[6b] 复用={r_cache} 换ROI={r_roi} reset后={r_reset}')
+check(not r_cache, '未到 min_gap 且画面没变 -> 复用上轮文字坐标, 不重跑 OCR')
+check(r_roi, '换 ROI 必须重跑 —— 旧坐标属于别的区域')
+check(r_reset, 'reset() 后首帧重新 OCR —— 旧缓存不能跨窗口尺寸复用')
+
+# ---------- 场景6c: 真机 03:54 那一帧的最小复现: 爆炸动画把指纹点大面积盖掉 ----------
+# 页面本身还是战斗页, 只是这一帧点色零命中。旧版当场烧一次全图 OCR; 现在只白等一帧。
+import numpy as np
+_b = Image.open(os.path.join(D, 'shots/battle_full.png')).convert('RGB')
+_arr = cp.to_arr(_b).copy()
+_arr[150:1006, :] = (_arr[150:1006, :] * 0 + 200).astype(np.uint8)   # 糊成一片亮灰, 谁都不像
+blotted = Image.fromarray(_arr)
+_p, _sc, _src = route_prints(ALL_PAGES, cp.to_arr(blotted))
+check(_p is None, f'造出来的动画帧确实点色零命中 (score={_sc:.3f})')
+app._act_gap = 0
+_ocr_before = OCR_STEPS
+QUEUE[:] = ['shots/battle_full.png']          # fake_capture 只读 QUEUE[0], 所以一帧一换
+r1 = run('anim1')
+QUEUE[:] = [blotted]
+r2 = run('anim2')
+QUEUE[:] = ['shots/battle_full.png']
+r3 = run('anim3')
+check(r1[0].name == 'battle' and not r1[2], '动画前: 战斗页全中, 零 OCR')
+check(r2[0] is None and not r2[2], '动画帧: 零命中 -> 白等一轮, 不烧全图 OCR')
+check(r3[0].name == 'battle' and not r3[2], '动画后: 立刻恢复全中并照常出手')
+check(OCR_STEPS == _ocr_before, f'场景6c 三帧额外 OCR 次数 = 0 (实测 {OCR_STEPS - _ocr_before})')
 
 # ---------- 场景7: 软命中(动画遮住 1 个指纹点) -> 稳帧才动手, 全程零 OCR ----------
 # 这是 2026-09-03 01:42 真机失效的最小复现: 那时代码一见差 1 点就整轮回退全图 OCR + 文字猜页
@@ -162,7 +205,7 @@ QUEUE[:] = ['shots/battle_full.png']
 f4 = run('back_to_full')
 check(f4[2] is False, '回到全中帧: 点色直接定页, 不受刚才软命中影响')
 
-FRAMES = 2 + 2 + 3 + 8 + 1 + 1 + 4   # 七个场景一共喂了多少帧
+FRAMES = 2 + 2 + 3 + 8 + 1 + 2 + 3 + 4   # 八个场景一共喂了多少帧
 print()
 print(f'共 {FRAMES} 帧, OCR 只跑了 {OCR_STEPS} 次 (旧版: 每帧一次全图 OCR = {FRAMES} 次)')
 if FAILS:

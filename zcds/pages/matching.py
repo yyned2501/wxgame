@@ -5,10 +5,10 @@ from .base import Page
 
 class MatchingPage(Page):
     name = 'matching'
-    next_pages = ('battle', 'unknown')
+    next_pages = ('versus', 'battle', 'unknown')
     act_needs_ocr = False     # 匹配页只等待, 从不动作 -> 不必为它跑 OCR
     # 点色指纹: 由 tools/pick_print.py pick --label matching 自动标定(勿手改)
-    # 4 个十字单元(每单元 5 点, 共 20 判色点), 全中即判为 matching; 语料 2/2 全中 / 异页误中 0 / margin 0.35 / 各形态覆盖 [2] 帧
+    # 1 种形态 x 4 个十字单元(每单元 5 点, 共 20 判色点/形态), 任一形态全中即判为 matching; 语料 4/4 全中 / 异页误中 0 / margin 0.35(异页最高只中 7/20 点) / 各形态覆盖 [4] 帧
     points = [
         [172, 168, 0xFFFFFF], [174, 168, 0xFFFFFF], [170, 168, 0xC4C4C4],
         [172, 170, 0xFFFFFF], [172, 166, 0x737373], [276, 168, 0xFFFFFF],

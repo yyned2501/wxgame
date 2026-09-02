@@ -5,7 +5,7 @@
 `ctrl.py` 的 `link` 状态机），针对本项目做了若干加强，见 §3。
 
 > **边界**：点色指纹**只负责"这是什么页面"**；页面内该点哪里（`Page.act()`）在读得到字时才用 OCR，
-> 读不到的（图形按钮、✕ 徽章、价格护栏）用 §12 那四把颜色尺子。两者互不干涉，不要把指纹和动作混在一起改。
+> 读不到的（图形按钮、✕ 徽章、价格护栏）用 §12 那六把颜色尺子。两者互不干涉，不要把指纹和动作混在一起改。
 >
 > **用户定案（2026-09-03）**：OCR 准确率太低而且速度太慢 —— **识别成功之后，脚本里一律用点色**。
 > 真机实测：点色判完全表 **2.2 ms/帧**，全图 OCR **675 ms/帧**。所以 OCR 是"点色一点收据都没有"时的
@@ -178,39 +178,52 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
   第 [6] 项锁死 §6-3 的同分 tie-break（用缩放过的真机大厅帧复现，含反向用例：只剩弹窗
   文案时不得被抢给大厅）；第 [7] 项是"顶栏闸门"，`lobby` 指纹一旦落回 y<130 直接判失败。
 
-## 7. 当前标定状态（语料 128 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 实测）
+## 7. 当前标定状态（语料 184 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 凌晨实测）
 
 | 页面 | 形态数 | 判色点/形态 | 单元/形态 | 语料全中 | 异页误中 | margin | 各形态覆盖帧数 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `lobby` | 3 | 15 | 3 | 33/33 | 0 | 0.20 | 33, 21, 12 |
-| `battle` | 2 | 25 | 5 | 40/40 | 0 | 0.12 | 13, 27 |
-| `result` | 1 | 25 | 5 | 16/16 | 0 | 0.12 | 16 |
-| `chest_info` | 1 | 15 | 3 | 9/9 | 0 | 0.27 | 9 |
-| `chest_open` | 1 | 15 | 3 | 6/6 | 0 | 0.40 | 6 |
-| `vip_popup` | 2 | 15 | 3 | 8/8 | 0 | 0.13 | 4, 4 |
-| `matching` | 1 | 20 | 4 | 2/2 | 0 | 0.35 | 2 |
+| `battle` | 2 | 25 | 5 | 70/70 | 0 | 0.16 | 13, 57 |
+| `lobby` | 3 | 15 | 3 | 35/35 | 0 | 0.20 | 35, 21, 14 |
+| `result` | 1 | 25 | 5 | 22/22 | 0 | 0.12 | 22 |
+| `chest_info` | 1 | 15 | 3 | 18/18 | 0 | 0.27 | 18 |
+| `vip_popup` | 2 | 15 | 3 | 9/9 | 0 | 0.27 | 4, 5 |
+| `chest_open` | 1 | 15 | 3 | 8/8 | 0 | 0.40 | 8 |
+| `matching` | 1 | 20 | 4 | 4/4 | 0 | 0.35 | 4 |
+| `versus` | 1 | 30 | 6 | 4/4 | **4** | **1.00** | 4 ← 唯一一行"异页误中"，见下表后注 |
 | `ad_popup` / `claim_popup` / `diamond_popup` / `unknown` | — | 无指纹 | — | — | — | — | 只走 OCR，见 §8 |
 
-语料分组：`battle` 40 / `lobby` 33 / `result` 16 / `other` 14 / `vip_popup` 8（另 `vip_month`
-归并进 `vip_popup` 的第二形态）/ `chest_info` 9 / `chest_open` 6 / `matching` 2 = **128**。
+> **`versus` 那一行不是 bug，是已判定不修的单向重叠**：4 张 `matching`（匹配中）帧对 `versus` 指纹也是
+> 30/30 全中（反向只中 9/30 = 0.30），因为这两屏共享同一套底部栏 + 顶栏像素。
+> 但 **`matching` 注册在 `versus` 之前**，且两页的 `act()` 都 `return False`（这一屏本来就没什么可点的），
+> 所以判成哪一个**行为完全一致**。要硬拆只能把点标在「匹配成功!」字样或中间的 VS 光球上 ——
+> 那是一片逐帧变化的动画区，比现在更不稳。留在这里当反例：**margin 1.00 不必然要修，先看它有没有行为后果**。
+> 真正该盯的是 `versus` 只有 4 帧语料（见 `README.md` 待办第 5 条）。
+
+语料分组：`battle` 70 / `lobby` 35 / `result` 22 / `other` 14 / `chest_info` 18 / `vip_popup` 9（另 `vip_month` 归并进 `vip_popup` 的第二形态）/ `chest_open` 8 / `matching` 4 / `versus` 4 = **184**。
 图名一律对应 `shots\<图名>.png`，各页 `# 形态: …` 注释里列的名字同理。
 带 `_live` 的真机帧由 `tools/pick_print.py` 的自动登记块并入 `LABELS`，不用手改。
 
-**留出集**（2026-09-03）：`shots_live\dbg_*.png` 里**没进过语料**的 47 帧真机图
-（battle 19 / lobby 20 / chest_info 5 / chest_open 1 / matching 1 / result 1）
-点色**全中 100%、页面判定 100% 正确、零 OCR** —— 见 `test_zero_ocr.py`。
+**留出集**（2026-09-03 凌晨复跑）：`shots_live\*.png` 里**没进过语料**的 203 帧真机图
+（battle 138 / lobby 33 / chest_info 17 / result 12 / other 2 / unknown 1）
+点色**全中 100%、页面判定 100% 正确**，只有 **3 帧**真要兜底：2 张白烟转场 + 1 张爆炸动画盖屏。
+而这两类现在都被闸门挡住了（白烟走 `is_transition()` 整帧跳过，爆炸帧走"零命中先等一帧"，见 §14）
+-> **留出集也不再花 OCR**。复核脚本 `scratch\scripts\audit_holdout.py`。
 这是"重标定到底修没修好真机失效"的唯一硬证据，`verify` 的绿灯代替不了它。
+注意 `harvest_live.py` 现在**不再把没指纹的页（`other` / `unknown`）收进语料**，转场帧留在 `shots_live/`
+当留出集，标定语料不会被动画帧污染。
 
 **margin 怎么读**：margin 是**所有非本页的语料帧上，最高能达到的命中比例**。换算成点数：
 
-- `0.12` → 异页最高只撞中 **3/25** 点（`battle`、`result`，25 点指纹最抗巧合）
-- `0.13` → **2/15**（`vip_popup`）
+- `0.12` → 异页最高只撞中 **3/25** 点（`result`，25 点指纹最抗巧合）
+- `0.16` → **4/25**（`battle`）
 - `0.20` → **3/15**（`lobby`）
-- `0.27` → **4/15**（`chest_info`）
-- `0.35` → **7/20**（`matching`，只有 2 帧可标，最弱的一组）
+- `0.27` → **4/15**（`chest_info`、`vip_popup`）
+- `0.35` → **7/20**（`matching`，只有 4 帧可标）
 - `0.40` → **6/15**（`chest_open`）
+- `1.00` → **30/30**（`versus`，和 `matching` 的单向重叠，**已判定无行为后果、刻意不修**，见上表注）
 
-而判定门槛是**全中（比例 1.0）**，所以最弱的 `chest_open` 也还有 **2.5 倍**余量，其余 ≥5 倍。
+而判定门槛是**全中（比例 1.0）**，所以除 `versus` 之外最弱的 `chest_open` 也还有 **2.5 倍**余量，其余 ≥5 倍。
+`print_stats.py` 的 `own-hit` 列（如 `versus 4/4` 只有 4 帧）才是"这组指纹够不够厚"的真正指标。
 每页注释里那行统计就是这几列的来源，用 `C:\projects\wxgame\zcds\tools\print_stats.py` 自动重算
 （加 `--dry-run` 只看表不改文件），**别手写**。
 
@@ -229,10 +242,10 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
 
 ## 9. 已知风险（别踩）
 
-1. **单帧形态没有跨帧验证**。看 §7 的"各形态覆盖帧数"，凡是出现 `1` 的都是**只用一张图标定的**：
-   `matching`（全部）、`result` 第 4 形态、`vip_popup` 的 `vip_month` 形态。这些形态的稳定性是"假设"，
-   不是"测过"。补图优先级：`sm_after`、`st_2`。
-   （`lobby` 原先的"第 3 形态 1 帧"已随 2026-09-02 重标消失，见 §9-6。）
+1. **薄语料的形态没有跨帧验证**。看 §7 的"各形态覆盖帧数"：`matching` 4 帧、`versus` 4 帧是现在最薄的两组
+   （`chest_open` 8 帧、`vip_popup` 两形态 4/5 帧次之）。原先"只用一张图标定"的形态
+   （`matching` 全部、`result` 第 4 形态、`vip_popup` 的 `vip_month`）已经随真机补帧长到 ≥4 帧，
+   但**4 帧仍然是"测过但不厚"**：换赛季 / 换活动皮肤时最先失效的就是这两组。补图优先级 `versus` > `matching`。
 2. **指纹刻意不覆盖动画区域**（倒计时数字、随机矿块、飘字、奖励动效）。好处是稳，
    代价是**改版换皮会整页失效**，表现为一直接 `src=ocr`。那是**重标定信号，不是 bug**，
    不要靠放宽容差去掩盖。
@@ -258,6 +271,9 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
    指纹要标在**与内容无关的框架**（标题行 / 固定的分类行）上。
 8. **图形按钮 OCR 读不到，只能按颜色找**（见 §12）。这不算指纹风险，但要知道：定页可以靠像素，
    **动作坐标同样可以靠像素**，不必事事依赖 OCR 认字。
+9. **`versus` 与 `matching` 是"已知重叠"，别再当 bug 去找**（§7 表后有注）。4 张 `matching` 帧对 `versus`
+   指纹 30/30 全中（反向 0.30），靠**注册顺序**（`matching` 在前）+ 两页 `act()` 都 `return False`
+   保证零行为后果。**别为了刷绿 margin 去把 `versus` 的点挪到动画区**。
 
 ## 10. 排障
 
@@ -276,20 +292,23 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
 | 路径 | 作用 |
 | --- | --- |
 | `C:\projects\wxgame\zcds\colorprint.py` | 指纹原语：`tolerance` / `is_color` / `is_multi_color` / `print_score` / `scale_points` / `missing_points` / `find_multi_color` |
-| `C:\projects\wxgame\zcds\pages\base.py` | `Page` 基类（`points` / `prints` / `degree` / `pos_tol` / `fingerprints()` / `print_match()`）+ `best_print()` / `soft_hit()` / `match_print()` / `route_prints()` / `is_soft()` / `detect_ocr()` |
-| `C:\projects\wxgame\zcds\pages\*.py` | 各页面的指纹（本文管的）与 `act()` 动作（OCR，本文不管） |
+| `C:\projects\wxgame\zcds\pages\base.py` | `Page` 基类（`points` / `prints` / `degree` / `pos_tol` / `act_needs_ocr` / `fingerprints()` / `print_match()`）+ `best_print()` / `soft_hit()` / `match_print()` / `route_prints()` / `is_soft()` / `detect_ocr()`；四把颜色尺子和 `color_pixels()` / `color_button()` 也在这（§12） |
+| `C:\projects\wxgame\zcds\pages\*.py` | 各页面的指纹（§7）与 `act()` 动作层点色（§12/§13）；声明 `act_needs_ocr = False` 的页整轮不读字 |
 | `C:\projects\wxgame\zcds\tools\pick_print.py` | 标定工具：`check` / `pick` / `verify` |
 | `C:\projects\wxgame\zcds\tools\print_stats.py` | 重算并写回各页指纹的统计注释（`--dry-run` 只看表） |
-| `C:\projects\wxgame\zcds\shots\` | 128 张标定语料（552x1006，含 2026-09-02/03 真机帧），`LABELS` 以 `shots/<图名>` 引用 |
+| `C:\projects\wxgame\zcds\shots\` | 184 张标定语料（552x1006，含 2026-09-02/03 真机帧），`LABELS` 以 `shots/<图名>` 引用 |
 | `C:\projects\wxgame\zcds\shots_live\` | 真机取证帧：`peek_*` = 只读探针，`dbg_*` = 主循环 `--shots N`，`probe_*` = 定点探针（**不入库**） |
 | `C:\projects\wxgame\zcds\scratch\` | 一次性逆向脚本与中间产物（**运行时不依赖**，见 `scratch\README.txt`）；`live_probe2.py` / `scale_experiment.py` / `live_stability.py` / `live_collect.py` 是真机取证脚本 |
 | `C:\projects\wxgame\zcds\scratch\scripts\test_chest_paid.py` | 真机帧离线回放：主循环同款 ROI(0.10~0.90) + scale 0.5 跑 11 帧，免费帧必点、付费帧必拒 |
-| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，128 张语料；[10] = §6.1 软命中门限） |
-| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：128 语料 + 47 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
-| `C:\projects\wxgame\zcds\test_cpu_offline.py` | 主循环离线集成（7 个场景，20 帧只花 4 次 OCR，场景 [7] = 软命中稳帧放行） |
+| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，184 张语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限） |
+| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：184 语料 + 203 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
+| `C:\projects\wxgame\zcds\test_cpu_offline.py` | 主循环离线集成（8 个场景，**25 帧只花 1 次 OCR**）：[6] = 点色零命中要连着两帧才肯兜底，[7] = 软命中稳帧放行，[8] = 付费宝箱格拉黑后不再回头点 |
 | `C:\projects\wxgame\zcds\test_battle_loop.py` | 战斗循环回归：进场帧清空 `clicked_cells` 并当场出手，整轮零 OCR |
-| `C:\projects\wxgame\zcds\test_price_guard.py` | 价格护栏回归（21 项，合成文本框 + 合成图像，不依赖 OCR） |
-| `C:\projects\wxgame\zcds\auto_bot.py` | 主循环接线处：`route_prints(self.pages, img, prefer=self.expected or ())`，返回 `None` 才 `vision.ocr(force=True)` |
+| `C:\projects\wxgame\zcds\test_act_zero_ocr.py` | **动作层零 OCR**：`result` / `chest_open` / `lobby` / `chest_info` 四页逐帧落点表，桩里把 OCR 入口全改成抛异常（§13） |
+| `C:\projects\wxgame\zcds\test_chest_livelock.py` | **开箱死循环回归**（8 段 22 项）：付费格必须被拉黑、免费格不许误封、到期回头再试、整行拉黑退化（§14） |
+| `C:\projects\wxgame\zcds\scratch\scripts\audit_holdout.py` | 留出集审计：`shots_live/` 里没进过语料的帧逐张定点色 + 判定，统计真要兜底的帧数 |
+| `C:\projects\wxgame\zcds\test_price_guard.py` | 价格护栏回归（39 项）：18 张真机帧回放（**帧表派生自 `LABELS`**，文件名带 `paid` 即付费帧）+ 合成文本框 + 合成图像，全程不依赖 OCR |
+| `C:\projects\wxgame\zcds\auto_bot.py` | 主循环接线处：`route_prints(self.pages, img, prefer=self.expected or ())`；返回 `None` 之后还要过**转场闸门**和**零命中先等一帧**，两关都没拦住才 `vision.ocr(force=True)`（§14）。`block()` / `is_blocked()` 那张跨页拉黑表也挂在这 |
 
 > `tools\pick_print.py` 和 `test_print_route.py` 只依赖 `numpy` + `PIL`，**可以在没装
 > pywin32 / rapidocr 的机器上完全离线跑**（本项目所有验证都这么做）。
@@ -297,18 +316,20 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
 >
 > mxdzz 只作为结构与算法参考，运行时不依赖它，也不要往它的目录里写东西。
 
-## 12. 除页面指纹外的四把「颜色尺子」
+## 12. 除页面指纹外的六把「颜色尺子」
 
-指纹管的是「这一帧是哪一页」。真机跑起来后发现还有四件事**必须**用像素判据、OCR 干不了：
+指纹管的是「这一帧是哪一页」。真机跑起来后发现还有六件事**必须**用像素判据、OCR 干不了：
 
 | 判据 | 位置 | 干什么 | 标定值（实测） |
 | --- | --- | --- | --- |
 | `find_close_badge(img)` | `pages/base.py` | 找弹窗右上角那个**红底白叉 ✕**，返回点击坐标 | 红 mask `(r>185)&(g<105)&(b<105)&(r-max(g,b)>90)`；12px 网格 + BFS 连通域；红像素 550~950（实测 716~818）、外接框 30~60（实测 36~48）、框内白像素 ≥60（实测 142~163）；多候选取**最靠右**；106 帧 0 误报，单帧 15~20ms |
 | `is_back_arrow(img)` | `pages/base.py` | 认左下角那个**青色返回箭头**，用于从没有指纹的侧页（任务/商店）逃回大厅 | 框 `(38,950,90,992)` 内 `(b>170)&(g<140)&(r<150)` 像素数 150~1000；实测任务页 463 / 大厅·结算·宝箱面板 0 / 战场页 1860（超上限，且战场是已知页）；点击点 `(63,970)` |
-| `PRICE_RE` | `pages/chest_info.py` | **不是找按钮，是拒绝按钮**：邻域出现价格文字就拒点 | `[￥¥] ?\d` / `\d+ ?元` / 钻石 / 宝石 / 充值；邻域 ±70/±60px |
-| `PRICE_BARE_RE` + `gem_cost_pixels(img,cx,cy)` | `pages/chest_info.py` | 认"花钱立即开箱"：把按钮**下方**的纯数字当价格，再数按钮正下方窄带里的**紫宝石像素**，任一命中就拒点 | 裸数字 `^\d{1,4}$`（只在按钮下方 `0<=dy<=60`、±70px 内生效）；宝石带 `(-45,12,45,45)` 相对按钮中心；mask `(r>170)&(g<130)&(b>150)`；阈值 **60**；实测免费 9 帧 **0** / 付费帧 **362** |
+| `PRICE_RE` + `PRICE_BARE_RE` | `pages/chest_info.py` | **只有否决权**：这一帧恰好带文字时，邻域出现价格字样/裸数字就拒点；文字永远不是放行的理由 | `[￥¥] ?\d` / `\d+ ?元` / 钻石 / 宝石 / 充值；邻域 ±70/±60px |
+| `is_transition(img)` | `pages/base.py` | **转场闸门**：白烟 / 黑屏帧点色必然全表不中，先认出来整帧跳过，一帧 OCR 都不花 | 见 §14 |
+| `color_pixels()` / `color_button()` | `pages/base.py` | 动作层的通用取色原语：在**标定的绝对像素框**里数某色像素 / 找一块足够大的色块并回传外接框中心 | `degree=BTN_DEGREE=90`（每通道 ±13，比指纹的 85 更紧，才能把「有按钮」和「按钮上的白字」分开）；前提 `ensure_window_size()` 钉死 552x1006 |
+| `PRICE_BARE_RE` + `gem_cost_pixels(img,cx,cy)` | `pages/chest_info.py` | 认"花钱立即开箱"：把按钮**下方**的纯数字当价格，再数按钮正下方窄带里的**紫宝石像素**，任一命中就拒点 | 裸数字 `^\d{1,4}$`（只在按钮下方 `0<=dy<=60`、±70px 内生效）；宝石带**改成相对点色锚点**：`GEM_BAND_BTN = (-50,0,50,40)`（旧值 `(-45,12,45,45)` 是按 OCR 框中心量的，留着只给回归脚本对照）；mask `(r>170)&(g<130)&(b>150)`；阈值 **60**；18 帧实测 **免费 13 帧恒 0 / 付费 5 帧恒 362** |
 
-### 为什么这四条不走 OCR
+### 为什么这六条不走 OCR
 
 - **✕ 是图形不是文字**：月卡/VIP 弹窗的关闭键是一个红色圆形徽章，OCR 读不出来。旧代码找不到
   `X`/`关闭` 关键字就退回点遮罩，而遮罩点是固定的 `(270,860)` —— dry-run 8 轮全在重复同一个无效点击，
@@ -317,18 +338,22 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
 - **侧页根本没有指纹**：任务/商店这类页面没进 `ALL_PAGES`，`route()` 只能给 `unknown 0.00`，
   而 `unknown.act()` 只会瞎点遮罩 → 玩家手动点进任务页，机器人就永久卡在那。
   左下角返回箭头是这类页共同的、纯图形的出口，用颜色认它比给每个侧页标指纹便宜得多。
-- **价格判据分两层，颜色只在窄带里可用**：顶栏那颗紫宝石图标主色约 `(222,62,246)`，看着很好认，但全语料
-  89 帧里 **77 帧**都有同色系紫 UI（面板底纹、按钮描边、奖励光效），**整帧**按颜色判价会误伤到不能点，
-  所以 `PRICE_RE` 先认**文字**（￥/元/钻石/宝石/充值）。真机翻车那次（`README.md` 六类问题第 6 条）
-  付费按钮下方只有裸数字 `30`、不带单位，文字判据一条都不命中 —— 于是补 `PRICE_BARE_RE`（按钮下方的
-  纯数字 = 价格）和 `gem_cost_pixels()`：**按钮正下方 33px 的窄带**里没有别的紫源，免费 9 帧恒 0、
-  付费帧 362，这个尺度上颜色是干净的。两条判据由 `test_price_guard.py` 的 21 个用例锁死。
+- **价格判据：颜色是主判据，文字只有否决权**（2026-09-03 凌晨顺序反转）。顶栏那颗紫宝石图标主色约
+  `(222,62,246)`，看着很好认，但全语料 89 帧里 **77 帧**都有同色系紫 UI（面板底纹、按钮描边、奖励光效），
+  **整帧**按颜色判价会误伤到不能点。能用的尺度只有一个：先用点色把黄按钮外接框找出来
+  （`BTN_BOX=(120,730,440,840)` / `0xFDCA33` ≥ 2000px，18 帧实测 npx 7655~8061、中心恒 `(275,795)`），
+  再数**按钮内下半那条 40px 带**里的紫宝石像素 —— 免费 13 帧恒 **0** / 付费 5 帧恒 **362**，
+  阈值 `GEM_MIN = 60` 隔着整个量程，比任何一次 OCR 都硬（本页 ROI OCR 还要 369ms）。
+  旧版"先 OCR 认文字"在真机 00:57 翻过车：价格画成"紫宝石图标 + 裸数字 30"，OCR 只读得到 `30`、没有单位，
+  文字判据一条都不命中 -> 机器人真替玩家花掉 30 宝石（顶栏 114->84）。所以 `PRICE_RE` / `PRICE_BARE_RE`
+  现在降级为**附加否决**：只有这一帧本来就带文字（同一轮里别的页跑过 OCR）才看，读到价格就拒点。
+  判付费后点的是右上角关闭徽章，一次都不碰按钮。39 个用例锁在 `test_price_guard.py`。
 
-> 这四把尺子都是 numpy 级别的像素判据（15~20ms），比再跑一次 OCR 便宜，也不受缩放影响。
+> 这六把尺子都是 numpy 级别的像素判据（15~20ms），比再跑一次 OCR 便宜，也不受缩放影响。
 > 新增同类判据时请像 `find_close_badge` 一样：**先把阈值和实测分布写进注释**，再跑一遍全语料确认 0 误报。
-## 13. 动作层也改成点色：`result` / `chest_open` / `lobby` 全轮零 OCR（2026-09-03 落地）
+## 13. 动作层也改成点色：`result` / `chest_open` / `lobby` / `chest_info` 全轮零 OCR（2026-09-03 落地，凌晨补上 `chest_info`）
 
-§12 那四把尺子是「点色做判据的特例」，这一节是**整页动作层都不再读字**。
+§12 那六把尺子是「点色做判据的特例」，这一节是**整页动作层都不再读字**。凌晨补的 `chest_info` 是最后一块拼图：它以前是**所有有指纹的页里唯一还留着 ROI OCR 的**（价格护栏），现在价格改看带内宝石像素；只剩没指纹的 `ad_popup` / `claim_popup` 两页的动作层还会去读字。
 页面把 `Page.act_needs_ocr = False` 之后，`App.step()` 给这些页只塞 `ScreenFeature(img=img, boxes=[], joined="")`：
 `act()` 里**只能**用 `ctx.f.img` 数像素，真去调 `ctx.f.find()` 不会报错，只会静默拿到空结果。
 
@@ -338,6 +363,9 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
 | `chest_open` 底部主按钮 | `BOT_BOX=(150,880,410,960)` | 白 `0xFFFFFF` ≥ **600** px | 6 帧恒 (275,917) —— 「领取奖励」「点击关闭」两种文案的按钮中心完全重合，一次取色通吃 |
 | `chest_open` 左上跳过 | `SKIP_BOX=(20,120,160,175)` | 白 ≥ **300** px | (82,142)；只在按钮未出（动画期）存在 → 节流键 `chest_open_claim`，消失后是 `chest_open_close` |
 | `lobby` 玩家对战 | `PVP_BOX=(60,640,290,720)` | 金 `0xFDCA33` ≥ **3000** px | 33 帧恒 (180,675)（实测 n=6405~6539） |
+| `chest_info` 黄按钮（免费/付费同一颗） | `BTN_BOX=(120,730,440,840)` | 金 `0xFDCA33` ≥ **2000** px | 18 帧 npx 7655~8061，中心恒 **(275,795)** |
+| `chest_info` 付费判据 | 按钮中心相对带 `GEM_BAND_BTN=(-50,0,50,40)` | 紫宝石 `(r>170)&(g<130)&(b>150)` ≥ **60** px | 免费 13 帧 **0** / 付费 5 帧 **362**（隔着整个量程） |
+| `chest_info` 关闭徽章 | 全帧 12px 网格 | 红底白叉（§12 `find_close_badge`） | (468,165~167)，认不出才退回 `CLOSE_POS=(470,167)` |
 | `lobby` 宝箱槽 ×4 | 按钮框 `cx±45, y838..882`；左半 `(cx-34,846,cx-14,874)` | 金 ≥**500** 判「有按钮」；左半金 ≥**250** 判 [开启]；白 ≥**120** 判 [点击解锁] | 四态码 `o`/`a`/`u`/`.`，点 `o`/`u` 中最左一格 |
 
 要点（全是踩过的坑）：
@@ -357,11 +385,53 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 3 级兜底, �
 
 **回归锁**：
 
-- `test_act_zero_ocr.py`：断言三页 `act_needs_ocr is False`（打印「动作层仍需读文字的页: ad_popup claim_popup chest_info」）、
-  result 16 帧 / chest_open 6 帧 / lobby 15 帧的**逐帧落点表**、33 帧大厅「每帧恰好一次点击且落点 ∈ 4 槽 ∪ 玩家对战、`a` 格绝不被点」、
+- `test_act_zero_ocr.py`：断言四页 `act_needs_ocr is False`（打印「动作层仍需读文字的页: ad_popup claim_popup」）、
+  result 22 帧 / chest_open 8 帧 / lobby 35 帧 / chest_info 18 帧（含 5 张付费）的**逐帧落点表**、35 帧大厅「每帧恰好一次点击且落点 ∈ 4 槽 ∪ 玩家对战、`a` 格绝不被点」、
   以及 `WATCH_ADS=True` 时才允许惰性调 `need_text()`。桩里把 `ScreenFeature.find/find_boxes/has/near` 与 `ctx.need_text()` 全部改成抛异常 ——
   动作层只要伸手动 OCR 就当场炸。
-- `test_cpu_offline.py` 场景 1/3/5/7 断言大厅·战斗·结算·软命中帧 `ocr=False`；现在 21 帧总共只跑 2 次 OCR，且两次都在 `chest_info`。
+- `test_cpu_offline.py` 场景 1/3/5/7 断言大厅·战斗·结算·软命中帧 `ocr=False`；现在 **25 帧总共只跑 1 次 OCR**，而且那一次是场景 6 故意造的"连着两帧点色零命中"（§14 那道闸的第二帧）。
+- `test_price_guard.py` 39 项：18 张真机帧回放（**帧表派生自 `LABELS`**，`chest_info_paid_*` = 付费）全部只点关闭、免费帧全部只点按钮，合成帧还钉了"￥68 贴脸""裸数字在按钮上方是奖励不算价格"等血泪用例。
 
-> 结论：**大厅 + 战斗 + 结算 + 开箱动画四类页已经全程零 OCR**，全项目只剩 `chest_info`（价格护栏，按设计保留）、
-> `ad_popup`、`claim_popup` 三条 OCR 路径。耗时对比：点色全表 2.2ms / 大厅 ROI OCR 369ms / 全图 OCR 675ms。
+> 结论：**大厅 + 战斗 + 结算 + 开箱动画 + 宝箱面板五类页已经全程零 OCR**。
+> 整个项目里 OCR 只剩两条入口：① 定页 —— `ad_popup` / `claim_popup` / `diamond_popup` 三页还没指纹
+> （`README.md` 待办第 2 条）；② 点色全表零收据时的兜底（§14 那四道闸门先拦，真机 120 步一次都没走到）。
+> 耗时对比：点色全表 **2.2ms** / 单页 ROI OCR 369ms / 全图 OCR **675ms** —— 差 300 倍，
+> 这才是「能定页就别读字」的真正理由。
+
+## 14. 点色优先的四道闸门 + 一张跨页拉黑表（2026-09-03 凌晨落地）
+
+「点色优先」不等于「点色失败就立刻回去跑 OCR」。真机跑起来之后，OCR 是被**四道闸门**一层层挡掉的，
+下表顺序就是 `App.step()` 里的代码顺序：
+
+| 闸门 | 常量 / 函数 | 触发条件 | 拦下之后 | 实测代价 |
+| --- | --- | --- | --- | --- |
+| ① 软命中稳帧 | `SOFT_ACT_AFTER = 2`（`auto_bot.py`） | 指纹只差 ≤1 点（动画盖住一个点） | 页面身份认下，但**这一帧不动手也不跑 OCR**；连续 2 帧同页才按稳定帧放行 | 0 ms |
+| ② 转场闸门 | `is_transition(img)`（`pages/base.py`） | 全表零收据，且是白烟（近白 ≥ `TRANS_WHITE_MIN=9`% / 饱和度 ≤ `45` / 亮度 ≥ `120`）或黑屏（亮度 ≤ `BLANK_LUM_MAX=25` / 饱和度 ≤ `25`） | **整帧跳过，什么都不点** | ~2 ms（一次 numpy 全帧扫描） |
+| ③ 零命中先等一帧 | `NO_HIT_OCR_AFTER = 2`（`auto_bot.py`） | 全表零收据、又判成不是转场 | 第 1 帧不动作也不跑 OCR；**连着第 2 帧**才允许兜底 | 0 ms |
+| ④ 才轮到 OCR | `vision.ocr(img, force=True)` | 前三关都没拦住（真·没指纹的页 / 被别的窗口遮挡） | 走 `detect_ocr()`，并置 `print_confirmed = False` | 675 ms |
+
+为什么要 ③：真机 03:54 有一帧被爆炸动画整片盖住，指纹零命中，旧版当场白烧 675ms 全图 OCR，
+还判成 `unknown` 去点遮罩。动画帧的特征正是「下一帧必然恢复全中」，所以先白等一帧几乎不亏；
+只有真页面才会连着两帧都不中，那时兜底才是对的。
+②③ 合起来之后，留出集 203 帧里原本只剩 3 帧需要兜底（2 张白烟 + 1 张爆炸帧），
+而这 3 帧如今分别被 ② 和 ③ 挡住 -> **真机 120 步全程零 OCR**（完整链路见 `README.md`）。
+回归锁在 `test_cpu_offline.py` 场景 [6]（两帧：帧 1 `page is None` 且未跑 OCR，帧 2 才 `unknown` + 一次 OCR）
+和场景 [6c]（把 `battle_full.png` 下半糊成亮灰造零命中帧，三帧额外 OCR 必须 = 0）。
+
+### 跨页拉黑表 `App.block()` / `App.is_blocked()`
+
+前四道闸门管的是「单帧要不要读字」，这张表管的是「某个坐标在一段时间内别再点」。
+真机 03:54 的死循环：大厅那一格点下去 -> 面板判出**要花钱** -> 只点关闭回大厅 ->
+那一格颜色一模一样、还是「可开」 -> 再点……6 秒一圈，实测连刷 **16 圈**，一局都没打到。
+
+- 面板判付费时按 `chest_slot_key(cx, cy)`（形如 `chest@220,855`）把**那一格**拉黑
+  `CHEST_PAID_BLOCK = 300` 秒（一场战斗约 90s，5 分钟 = 3~4 场之后才回头再试）。
+  交接靠 `ctx.chest_target`：大厅按下某格时写入，面板用完即清，防下一格冒领。
+- 说不清是哪一格（玩家手动点开的面板）就退化成 `CHEST_BLOCK_ALL = 'chest@all'` 拉黑整行。
+- 大厅 `chest_states()` 把拉黑期内的格子从可点集里剔掉；**四格全在拉黑期**就改点[玩家对战]
+  `(180,675)`，挂机继续打 PVP，而不是原地空转。
+- **到期会自动回头再试**：宝箱会随时间转免费，永久封等于把免费宝箱也一起封了。
+- 免费面板**绝不拉黑**；也只拉黑真判出付费的那一格，不搞株连。
+- 以上每一条都有回归：`test_chest_livelock.py`（8 段 22 项，含「交替喂大厅帧/付费面板帧 20 圈，
+  一次都没点付费按钮、只开过一次箱、其余 19 轮都在打对战」）。
+

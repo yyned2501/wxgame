@@ -11,6 +11,7 @@ from .chest_info import ChestInfoPage
 from .chest_open import ChestOpenPage
 from .diamond_popup import DiamondPopupPage
 from .vip_popup import VipPopupPage
+from .versus import VersusPage
 from .unknown import UnknownPage
 
 ALL_PAGES = [
@@ -24,5 +25,6 @@ ALL_PAGES = [
     BattlePage(),
     MatchingPage(),
     LobbyPage(),
+    VersusPage(),
     UnknownPage(),
 ]

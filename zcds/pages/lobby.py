@@ -2,7 +2,8 @@
 """主页(lobby): 自动开宝箱 -> 开始玩家对战"""
 import logging
 
-from .base import Page, color_button, color_pixels
+from .base import (CHEST_BLOCK_ALL, Page, chest_slot_key, color_button,
+                     color_pixels)
 
 CHEST_SLOTS = [(109, 855), (220, 855), (331, 855), (441, 855)]
 # ^ 2026-09-02 重标定: 旧值 (95,741)... 落在卡片顶边外(卡片实占 y738..879), 且 x 取自金币角标图标(偏左 14px),
@@ -38,11 +39,11 @@ PVP_MIN_PX = 3000
 
 class LobbyPage(Page):
     name = 'lobby'
-    next_pages = ('chest_open', 'matching', 'chest_info', 'claim_popup', 'ad_popup', 'vip_popup', 'diamond_popup')
+    next_pages = ('chest_open', 'matching', 'chest_info', 'versus', 'claim_popup', 'ad_popup', 'vip_popup', 'diamond_popup')
 
     # 点色指纹: 由 tools/pick_print.py pick --label lobby --region 0,130,552,1006 自动标定(勿手改)
     # 候选区必须排除顶栏资源数字(y<130): 那些点的颜色随金币/钻石数值变化, 早先标定的 15 点全在顶栏, 换号即失效
-    # 3 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 lobby; 语料 28/28 全中 / 异页误中 0 / margin 0.20(异页最高只中 3/15 点) / 各形态覆盖 [28, 20, 7] 帧
+    # 3 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 lobby; 语料 35/35 全中 / 异页误中 0 / margin 0.20(异页最高只中 3/15 点) / 各形态覆盖 [35, 21, 14] 帧
     # 语料 25/25 全中 / 异页误中 0 / margin 0.20 / 各形态覆盖 [17, 4, 4] 帧
     prints = (
         (   # 形态: after_battle_btn/after_click/after_click2...
@@ -105,14 +106,24 @@ class LobbyPage(Page):
 
     def act(self, ctx):
         img = ctx.f.img      # act_needs_ocr=False => ctx.f 只有图没有文字框, 别用 ctx.f.find()
-        # 1) 开宝箱: 按钮是纯金[开启] 或 白字[点击解锁] = 免费可点
+        # 1) 开宝箱: 按钮是纯金[开启] 或 白字[点击解锁] = 免费动作才点
+        #    再叠一层拉黑: 面板判出"这格要花钱"后 CHEST_PAID_BLOCK 秒内不再点它
+        #    (真机 03:54: 那一格颜色不变 -> 大厅反复点 -> 反复关面板, 6 秒一圈刷了 16 次)
+        st = self.chest_states(img)
         ready = self._ready_chests(img)
-        if ready:
-            i = self._chest_i % len(ready)
-            sx, sy = ready[i]
+        # CHEST_BLOCK_ALL = 面板判过付费但说不清是哪一格(用户手动开的面板) -> 整行先别碰
+        openable = ([] if ctx.is_blocked(CHEST_BLOCK_ALL)
+                    else [s for s in ready if not ctx.is_blocked(chest_slot_key(s))])
+        if ready and not openable:
+            if not ctx.acted('chest_blocked_log', gap=60):
+                logging.info(f'[主页] 宝箱状态 {st} {len(ready)} 格全在拉黑期(开箱要花钱) -> 跳过开箱去打对战')
+        elif openable:
+            i = self._chest_i % len(openable)
+            sx, sy = openable[i]
             if not ctx.acted('chest_open'):
                 self._chest_i = i + 1
-                logging.info(f'[主页] 宝箱状态 {self.chest_states(img)} 可开 {len(ready)} 格, 点第 {i + 1} 格 ({sx},{sy})')
+                ctx.chest_target = chest_slot_key((sx, sy))
+                logging.info(f'[主页] 宝箱状态 {st} 可开 {len(openable)} 格, 点第 {i + 1} 格 ({sx},{sy})')
                 ctx.click(sx, sy)
                 return True
         # 2) 玩家对战: 认那块金色按钮的外接框中心(旧版要 OCR 读[玩家对战], 读不到就永远不点)

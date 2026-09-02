@@ -308,3 +308,52 @@ def is_back_arrow(img):
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     n = int(((b > 170) & (g > 140) & (r < 150)).sum())
     return BACK_ARROW_MIN_PX <= n <= BACK_ARROW_MAX_PX
+
+
+# ---- 转场闸门(2026-09-03 定案: 转场帧也要零 OCR) --------------------------------
+# 坑(真机 00:42 / 01:42 / 03:12 三处复现): 进战斗前有一道"白烟"转场, 烟雾盖满整屏
+#     -> 点色全表一张都不中 -> 旧版每帧白烧一次全图 OCR(675ms), 然后判成 unknown,
+#     unknown 又去点遮罩。转场期间唯一正确的动作就是"什么都不做"。
+# 判据(实测区间见下, 语料 159 + 真机留出 71 帧里"转场帧"与"正常页"之间零重叠):
+#   白烟帧   近白像素 12.1~17.8% / 平均饱和度 15.6~37.6 / 平均亮度 193~216
+#   正常页   近白像素 <=5.6%(大厅最高) / 平均饱和度 >=56(宝箱动画页最低 57.1)
+#   黑屏帧   平均亮度 <=11.9 / 饱和度 <=0.4(截图失败、微信还在加载)
+# 两条门限都留了一倍以上余量, 而且只在"点色全表没收据"时才会被调用 —— 拦不住任何已知页。
+TRANS_WHITE_MIN = 9.0      # 近白像素占比%: 白烟帧最低 12.1, 正常页最高 5.6
+TRANS_SAT_MAX = 45.0       # 平均饱和度: 白烟帧最高 37.6, 正常页最低 56.0
+TRANS_LUM_MIN = 120.0      # 平均亮度: 白烟帧最低 193, 正常页最高 161(战斗)
+BLANK_LUM_MAX = 25.0       # 黑屏帧亮度上限(实测 0~11.9; 正常页最低 33.7)
+BLANK_SAT_MAX = 25.0       # 黑屏帧饱和度上限(实测 <=0.4)
+
+
+def frame_stats(img):
+    """(平均亮度, 平均饱和度=max-min, 近白像素占比%) 一次 numpy 扫完全帧, ~2ms"""
+    import numpy as np
+    a = to_arr(img).astype(np.int16)
+    mx, mn, lum = a.max(2), a.min(2), a.mean(2)
+    white = ((a[..., 0] > 225) & (a[..., 1] > 225) & (a[..., 2] > 225)).mean() * 100.0
+    return float(lum.mean()), float((mx - mn).mean()), float(white)
+
+
+# ---- 跨页协作: "这格宝箱要花钱" 拉黑(真机 2026-09-03 03:54 死循环教训) --------
+# 坑: 大厅那一格点下去 -> 面板判出"要花钱" -> 关面板回大厅 -> 那一格颜色没变,
+#     还是"可开" -> 再点 -> 再关 ... 6 秒一圈, 实测连刷 16 圈, 一局都没打到。
+# 规则: 面板判出付费就把**那一格**拉黑 CHEST_PAID_BLOCK 秒, 期间大厅只点别的格或去对战;
+#       到期再探一次(宝箱会随时间转免费), 花钱的口子始终由颜色判据守着。
+CHEST_PAID_BLOCK = 300            # 秒; 一场战斗 ~90s, 5 分钟 = 3~4 场之后才回头再试
+CHEST_BLOCK_ALL = 'chest@all'     # 不知道是哪一格时(用户手动开的面板)拉黑整行
+
+
+def chest_slot_key(pos):
+    """宝箱格子的拉黑键(坐标即身份: 四格中心 x=109/220/331/441)"""
+    return 'chest@%d,%d' % (int(pos[0]), int(pos[1]))
+
+
+def is_transition(img):
+    """白烟/黑屏等转场帧 -> (True, 原因): 本轮既不动作也不跑 OCR"""
+    lum, sat, white = frame_stats(img)
+    if lum <= BLANK_LUM_MAX and sat <= BLANK_SAT_MAX:
+        return True, '黑屏'
+    if white >= TRANS_WHITE_MIN and sat <= TRANS_SAT_MAX and lum >= TRANS_LUM_MIN:
+        return True, '白烟'
+    return False, ''

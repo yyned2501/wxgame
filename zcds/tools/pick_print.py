@@ -54,11 +54,18 @@ LABELS = {
                'shots/watch_124705', 'shots/watch_124707'],
     'chest_info': ['shots/chestinfo', 'shots/stuck_010826', 'shots/stuck_011012',
                    'shots/stuck_011157', 'shots/stuck_011347', 'shots/stuck_011536',
-                   'shots/stuck_011716', 'shots/chest_info_iron_2334'],
+                   'shots/stuck_011716', 'shots/chest_info_iron_2334',
+                   # 5 张**要花钱**的面板(人眼核对: 按钮带内紫宝石像素都是 362), 命名即真值 ->
+                   # 免费帧走上面的 <label>_live* 自动登记, 付费帧必须显式登记(名字里没有 live),
+                   # 否则 harvest_live 挑进来会被当成免费帧, 价格护栏回归就假绿了。
+                   'shots/chest_info_paid_005704', 'shots/chest_info_paid_005708',
+                   'shots/chest_info_paid_031415', 'shots/chest_info_paid_035442',
+                   'shots/chest_info_paid_040458'],
     'vip_popup': ['shots/ask_battle', 'shots/live_now', 'shots/now_state', 'shots/p0'],
     'vip_month': ['shots/st_2', 'shots/vip_month_0003'],                       # 月卡礼包弹窗(vip_popup 的另一种形态)
     'matching': ['shots/sm_after'],
     'chest_open': ['shots/chest_open_claim', 'shots/chest_open_close', 'shots/chest_open_reward'],
+    'versus': ['shots/versus_live005730.png'],
     'other': ['shots/dbg', 'shots/probe_flag0', 'shots/st_0', 'shots/guide_live1', 'shots/guide_live3', 'shots/watch_124711',
               'shots/watch_124723', 'shots/watch_124735', 'shots/watch_124746',
               'shots/watch_124758', 'shots/other_quest_0022'],

@@ -37,29 +37,29 @@ class BattlePage(Page):
     next_pages = ('result',)
     act_needs_ocr = False     # 战斗页纯点色(颜色扫描 + 指纹), 一轮都不该碰 OCR
     # 点色指纹: 由 tools/pick_print.py pick --label battle 自动标定(勿手改)
-    # 2 种形态 x 5 个十字单元(每单元 5 点, 共 25 判色点/形态), 任一形态全中即判为 battle; 语料 40/40 全中 / 异页误中 0 / margin 0.12 / 各形态覆盖 [13, 27] 帧
+    # 2 种形态 x 5 个十字单元(每单元 5 点, 共 25 判色点/形态), 任一形态全中即判为 battle; 语料 70/70 全中 / 异页误中 0 / margin 0.16(异页最高只中 4/25 点) / 各形态覆盖 [13, 57] 帧
     prints = (
         (   # 形态: shots/battle_full/shots/exp_battle0/shots/exp_click50...
-            [68, 192, 0xFFFFFF], [70, 192, 0x682F30], [66, 192, 0x904042],
-            [68, 194, 0xFFFFFF], [68, 190, 0xCAC9C9], [500, 212, 0xFFFFFF],
-            [502, 212, 0xFFFFFF], [498, 212, 0xB7B6B6], [500, 214, 0xFFFFFF],
-            [500, 210, 0xCDCDCD], [212, 772, 0xFFFFFF], [214, 772, 0xFFFFFF],
-            [210, 772, 0xFFFFFF], [212, 774, 0xFFFFFF], [212, 770, 0xFFFFFF],
-            [80, 868, 0xFFFFFF], [82, 868, 0x6B6C6B], [78, 868, 0x667756],
-            [80, 870, 0xF3F3F3], [80, 866, 0xDDDDDD], [60, 820, 0xFEFEFE],
-            [62, 820, 0xFEFEFE], [58, 820, 0xEFEFEF], [60, 822, 0xFEFEFE],
-            [60, 818, 0x587937],
+            [68, 194, 0xFFFFFF], [70, 194, 0x852326], [66, 194, 0x8C4D4E],
+            [68, 196, 0xFDFDFD], [68, 192, 0xFFFFFF], [504, 210, 0xFFFFFF],
+            [506, 210, 0xFFFFFF], [502, 210, 0xFFFFFF], [504, 212, 0xFFFFFF],
+            [504, 208, 0x979797], [212, 774, 0xFFFFFF], [214, 774, 0xFFFFFF],
+            [210, 774, 0xFFFFFF], [212, 776, 0xFFFFFF], [212, 772, 0xFFFFFF],
+            [276, 814, 0xFFFFFF], [278, 814, 0xFFFFFF], [274, 814, 0xEEEEEE],
+            [276, 816, 0xFFFFFF], [276, 812, 0xFFFFFF], [40, 866, 0xFFFFFF],
+            [42, 866, 0x9B9B9B], [38, 866, 0x6C6C6C], [40, 868, 0xB1B1B1],
+            [40, 864, 0xB6B6B6],
         ),
         (   # 形态: shots/battle_live_004258/shots/battle_live_004301/shots/battle_live_004305...
-            [72, 196, 0xFFFFFF], [74, 196, 0x7A749E], [70, 196, 0x595185],
-            [72, 198, 0xEFEFF0], [72, 194, 0xFFFFFF], [504, 212, 0xFFFFFF],
-            [506, 212, 0xFFFFFF], [502, 212, 0xFFFFFF], [504, 214, 0xFFFFFF],
-            [504, 210, 0xFEFEFE], [456, 216, 0xFFFFFF], [458, 216, 0x686096],
-            [454, 216, 0xE7E7E7], [456, 218, 0xFFFFFF], [456, 214, 0x716A98],
-            [80, 868, 0xFFFFFF], [82, 868, 0x626262], [78, 868, 0xBCB8B5],
-            [80, 870, 0xD9D9D9], [80, 866, 0xFCFCFC], [60, 820, 0xFEFEFE],
-            [62, 820, 0xFEFEFE], [58, 820, 0xFBFBFB], [60, 822, 0xE7E7E7],
-            [60, 818, 0xE9E9E9],
+            [48, 214, 0xFFFFFF], [50, 214, 0xFFFFFF], [46, 214, 0xFFFFFF],
+            [48, 216, 0xFFFFFF], [48, 212, 0xFFFFFF], [500, 214, 0xFFFFFF],
+            [502, 214, 0xFFFFFF], [498, 214, 0xD2D2D2], [500, 216, 0xFFFFFF],
+            [500, 212, 0xF9F9F9], [52, 870, 0xFFFFFF], [54, 870, 0xFFFFFF],
+            [50, 870, 0xFFFFFF], [52, 872, 0x959595], [52, 868, 0xF5F5F5],
+            [48, 822, 0xFEFEFE], [50, 822, 0xFEFEFE], [46, 822, 0xFEFEFF],
+            [48, 824, 0xF9F9FA], [48, 820, 0x767683], [464, 814, 0xF9FEFE],
+            [466, 814, 0xF9FEFE], [462, 814, 0xC5CACA], [464, 816, 0xF9FEFE],
+            [464, 812, 0xB4B7B7],
         ),
     )
     def detect(self, f):

@@ -26,5 +26,6 @@ PAGE_CFG = {
     'diamond_popup': dict(roi=None, scale=0.5, poll=3.0, ocr_gap=6.0),
     'vip_popup':    dict(roi=None, scale=0.5, poll=3.0, ocr_gap=6.0),
     'ad_popup':     dict(roi=None, scale=0.5, poll=3.0, ocr_gap=3.0),  # 放弃/关闭 分布在 y88~609: 必须全图
+    'versus':       dict(roi=None, scale=0.5, poll=3.0, ocr_gap=999.0),  # VS 页只等游戏自己进战斗: 指纹定页 -> 永不跑 OCR
     'unknown':      dict(roi=None, scale=0.5, poll=8.0, ocr_gap=15.0),
 }

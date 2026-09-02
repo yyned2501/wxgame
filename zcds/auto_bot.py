@@ -29,13 +29,17 @@ from colorprint import REF_SIZE
 from config import PAGE_CFG
 from vision import Vision, ScreenFeature
 from pages import ALL_PAGES
-from pages.base import detect_ocr, is_soft, route_prints
+from pages.base import detect_ocr, is_soft, is_transition, route_prints
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(ROOT, 'bot.log')
 # 软命中(点色差<=1个指纹点)要连续这么多帧同一页才允许动手:
 # 转场/动画中间帧不会连着两帧长得一样, 稳住了才点, 免得误点。
 SOFT_ACT_AFTER = 2
+# 点色全表零命中、又不像转场帧时, 要连续这么多帧才允许花一次全图 OCR:
+# 战斗爆炸/掉落动画会临时盖住指纹点(实测 1 帧 score 0.07), 下一帧就恢复全中,
+# 旧版每出现一帧这种图就白烧 675ms 还把它判成 unknown 去点遮罩。
+NO_HIT_OCR_AFTER = 2
 
 
 def setup_logging():
@@ -67,6 +71,8 @@ class App:
         self.clicked_cells = set()
         self.last_cell = 0
         self.last_action = {}
+        self.blocked = {}                # key -> 解禁时刻(跨页拉黑, 见 pages/base.py chest_slot_key)
+        self.chest_target = None         # 大厅刚点下去的宝箱格 key, 面板判付费时回写拉黑
         self.unknown_idle = 0
         self.expected = None             # 动作后期望的页面集合
         self.cur_page = None
@@ -75,6 +81,7 @@ class App:
         self._text_done = False          # 本轮这帧是否已经跑过 OCR(need_text 不重复花销)
         self._soft_page = None           # 上一帧软命中的页(软命中要连续若干帧才算稳)
         self._soft_streak = 0
+        self._nohit_streak = 0           # 点色连续零命中的帧数(到第 2 帧才肯花全图 OCR)
 
     # ---- 上下文工具(供页面调用) ----
     def click(self, x, y):
@@ -123,6 +130,16 @@ class App:
             return True
         self.last_action[key] = now
         return False
+
+    def block(self, key, sec, why=''):
+        """拉黑某个目标 sec 秒(= 这段时间内别再点它). 与 acted() 的区别:
+        acted 是"同一动作别重复做"的节流, block 是"这个目标本身现在不能碰"."""
+        self.blocked[key] = time.time() + sec
+        logging.info(f'[拉黑] {key} {sec}s ({why})')
+
+    def is_blocked(self, key):
+        """目标还在拉黑期吗"""
+        return time.time() < self.blocked.get(key, 0.0)
 
     def ensure_window(self):
         if self.hwnd is None or not g.u32.IsWindow(self.hwnd):
@@ -196,6 +213,17 @@ class App:
             self._soft_page, self._soft_streak = name, 1
         return self._soft_streak >= SOFT_ACT_AFTER
 
+    def _save_shot(self, img, label):
+        """--shots N 取证模式: 把当前帧存成 shots_live/dbg_NNN_<label>_<hhmmss>.png"""
+        d = os.path.join(ROOT, 'shots_live')
+        os.makedirs(d, exist_ok=True)
+        fn = 'dbg_{0:03d}_{1}_{2}.png'.format(self.steps, label, time.strftime('%H%M%S'))
+        try:
+            img.save(os.path.join(d, fn))
+            logging.info(f'{"[DRY]" if self.dry_run else ""}[存帧] {fn}')
+        except Exception as e:
+            logging.warning('[存帧] 失败: %s', e)
+
     def step(self):
         """跑一轮: 点色定页(零 OCR) -> 只有声明要读字的页才 OCR 本页 ROI -> 动作.
         返回 (page, acted, ocr_ran)"""
@@ -206,8 +234,34 @@ class App:
         page, score, src = route_prints(self.pages, img, prefer=self.expected or ())
         soft = is_soft(src)
         defer = False
+        self._trans_streak = getattr(self, '_trans_streak', 0)
         if page is None:
-            # 2) 点色连"差一个点"的软命中都没有(新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR
+            # 2a) 转场闸门: 白烟/黑屏帧点色必然全表不中 -> 先用颜色认出来, 本轮直接跳过,
+            #     一次 OCR 都不花(旧版在这里每帧白烧 675ms, 然后判成 unknown 去点遮罩)。
+            trans, why = is_transition(img)
+            if trans:
+                self._trans_streak += 1
+                self.f = ScreenFeature(img=img, boxes=[], joined='')
+                self._soft_page, self._soft_streak = None, 0
+                if self.shots:
+                    self.shots -= 1
+                    self._save_shot(img, 'other')
+                if self._trans_streak % 10 == 1:
+                    logging.warning(f'[转场] {why}帧(连续 {self._trans_streak} 帧) '
+                                    f'-> 本轮不动作, 也不花 OCR')
+                return None, False, False
+            self._trans_streak = 0
+            # 2b) 点色连"差一个点"的软命中都没有 -> 要么真是没标指纹的页, 要么只是动画盖住了指纹点。
+            #     先白等一帧(零成本): 动画帧下一帧必然恢复全中, 真页面才会连着两帧都不中, 那时才花全图 OCR。
+            self._nohit_streak += 1
+            if self._nohit_streak < NO_HIT_OCR_AFTER:
+                self.f = ScreenFeature(img=img, boxes=[], joined='')
+                self._soft_page, self._soft_streak = None, 0
+                logging.warning(f'[兜底] 点色零命中 第{self._nohit_streak}/{NO_HIT_OCR_AFTER}帧'
+                                f'(上一帧={self.cur_page}) -> 本轮不动作, 也不花 OCR')
+                return None, False, False
+            self._nohit_streak = 0
+            # 2c) 连着两帧都没有任何指纹(侧页/新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR
             self.f, ocr_ran = self.vision.ocr(img, force=True)
             self._text_done = True
             page, score = detect_ocr(self.pages, self.f)
@@ -215,6 +269,8 @@ class App:
             self.print_confirmed = False
             self._soft_page, self._soft_streak = None, 0
         else:
+            self._trans_streak = 0
+            self._nohit_streak = 0
             self.print_confirmed = True
             src = 'print-' + src
             if not soft:
@@ -246,15 +302,7 @@ class App:
         # --shots N: 取证模式, 每轮把当前帧存到 shots_live/dbg_*.png
         if self.shots:
             self.shots -= 1
-            d = os.path.join(ROOT, 'shots_live')
-            os.makedirs(d, exist_ok=True)
-            fn = 'dbg_{0:03d}_{1}_{2}.png'.format(
-                self.steps, page.name, time.strftime('%H%M%S'))
-            try:
-                self.f.img.save(os.path.join(d, fn))
-                logging.info(f'{"[DRY]" if self.dry_run else ""}[存帧] {fn}')
-            except Exception as e:
-                logging.warning('[存帧] 失败: %s', e)
+            self._save_shot(self.f.img, page.name)
         # 转移校验
         if self.expected and page.name not in self.expected and page.name != 'unknown':
             logging.info(f'[转移] 预期{self.expected} 实际->{page.name}')
@@ -327,7 +375,13 @@ def main():
             max_steps=a.max_steps, shots=a.shots).run()
     except Exception as e:
         logging.exception('启动失败: %s', e)
-    input('按回车退出...')
+    # 双击 exe/pyw 运行时要停住让人看日志; 但管道/自动化下 stdin 可能仍是控制台,
+    # 读不到行就安静退出, 别让 EOFError 把成功的跑批报成崩溃。
+    if sys.stdin and sys.stdin.isatty():
+        try:
+            input('按回车退出...')
+        except EOFError:
+            pass
 
 
 if __name__ == '__main__':

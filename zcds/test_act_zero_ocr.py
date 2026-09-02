@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""离线「动作层零 OCR」回归: result / chest_open / lobby 三页 act() 全程不碰文字识别
+"""离线「动作层零 OCR」回归: result / chest_open / lobby / chest_info 四页 act() 全程不碰文字识别
 
 用户定案(2026-09-03): OCR 准确率太低而且速度太慢 —— 定页面用点色指纹, 点哪里也必须用点色。
 本脚本把 ctx 换成假桩, need_text() 与 f.find()/f.has() 一被调用就抛, 于是同时钉死四件事:
-  1) 这三页的 act_needs_ocr 必须是 False(主循环据此决定要不要为本页跑一次 OCR, 真机 369~675ms)
+  1) 这四页的 act_needs_ocr 必须是 False(主循环据此决定要不要为本页跑一次 OCR, 真机 369~675ms)
   2) act() 里不许偷偷去读字 —— 读了就当场抛, 记一条失败
   3) 每帧点到的坐标必须等于人工核对过的真值(点色取按钮外接框中心, 两种版式中心差 80px, 写死必错)
   4) 该不动作的帧(广告盖脸、两处白块都未出)一次都不许点
 用法(项目根目录): python -X utf8 test_act_zero_ocr.py     # 退出码 0 = 全通过
 """
+import glob
 import os
 import sys
 
@@ -20,6 +21,7 @@ from PIL import Image, ImageDraw
 
 import pick_print as pp
 from pages import ALL_PAGES
+from pages.chest_info import ChestInfoPage
 from pages.chest_open import ChestOpenPage
 from pages.lobby import CHEST_SLOTS, LobbyPage
 from pages.result import ResultPage
@@ -38,7 +40,7 @@ def check(cond, msg):
 
 
 class ZeroOcr(Exception):
-    """动作层想去读文字 —— 这三页必须纯点色, 出现即失败"""
+    """动作层想去读文字 —— 这四页必须纯点色, 出现即失败"""
 
 
 class NoText(ScreenFeature):
@@ -68,6 +70,15 @@ class Ctx:
         self.keys = []
         self.battles = 0
         self._done = set(blocked)
+        self.chest_target = None
+        self._blacklist = set()
+
+    # ---- 拉黑接口(与 App.block/is_blocked 同语义, 见 pages/base.py chest_slot_key) ----
+    def block(self, key, sec, why=''):
+        self._blacklist.add(key)
+
+    def is_blocked(self, key):
+        return key in self._blacklist
 
     def click(self, x, y):
         self.clicks.append((int(x), int(y)))
@@ -111,8 +122,8 @@ def blank(img, box):
 
 
 def main():
-    print('[1] 声明自检: 这三页必须是纯点色页, 主循环才不会为它跑 OCR')
-    for cls in (ResultPage, ChestOpenPage, LobbyPage):
+    print('[1] 声明自检: 这四页必须是纯点色页, 主循环才不会为它跑 OCR')
+    for cls in (ResultPage, ChestOpenPage, LobbyPage, ChestInfoPage):
         p = cls()
         check(p.act_needs_ocr is False, '%s.act_needs_ocr 应为 False' % p.name)
     left = ' '.join(p.name for p in ALL_PAGES if p.act_needs_ocr)
@@ -130,6 +141,13 @@ def main():
         'watch_124707': None,
         'result_live005639': (275, 910), 'result_live010726': (275, 910),
         'result_live010729': (275, 910),
+        # 2026-09-03 03:09/03:14 真机三帧(同一版式, 亮紫按钮中心 910)
+        'result_live030901': (275, 910), 'result_live030920': (275, 910),
+        'result_live031408': (275, 910),
+        # 2026-09-03 03:11/03:54/04:08 真机三帧: 核对过裁图, 亮紫块是[点击继续],
+        # 不是"看广告翻倍"(那一颗在更上面, 且 WATCH_ADS=False 时永远不该碰)
+        'result_live031108': (275, 910), 'result_live035436': (275, 910),
+        'result_live040817': (275, 910),
     }
     rp = ResultPage()
     frames = label_frames('result')
@@ -158,6 +176,10 @@ def main():
         'chest_open_reward': ((275, 917), 'chest_open_close'),
         'chest_open_live005718': ((275, 917), 'chest_open_close'),
         'chest_open_live014205': ((275, 917), 'chest_open_close'),
+        # 真机 01:08:03: 左上[跳过]已消失 = 关闭态(人眼核对 scratch/images/co_010803.png)
+        'chest_open_live010803': ((275, 917), 'chest_open_close'),
+        # 真机 03:51:01: 底部白字=点击关闭, bot=1394 skip=0(核对 scratch/chk_co_bot.png)
+        'chest_open_live035101': ((275, 917), 'chest_open_close'),
     }
     co = ChestOpenPage()
     frames = label_frames('chest_open')
@@ -258,13 +280,38 @@ def main():
             res.WATCH_ADS = old
     check(res.WATCH_ADS is False, 'WATCH_ADS 默认必须关(不点任何广告)')
 
+    print('[6] 宝箱面板: 黄按钮用点色找 / 付费用带内宝石像素判 —— 价格护栏也脱开文字了')
+    # 旧版护栏全靠 OCR 读"钻石/宝石/￥", 又慢又不准: 真机 00:57 把"紫宝石图标+30"读成裸数字
+    # 漏判, 机器人真替玩家花掉 30 宝石。现在主判据是颜色, 本节点死"整页一个字都不读"。
+    ci = ChestInfoPage()
+    # 真值 = 语料文件名(命名即身份, 见 tools/pick_print.py LABELS):
+    #   chest_info_paid_*   要花钱的面板(人眼核对: 按钮带内紫宝石像素 362)
+    #   其余 chest_info_*   免费面板
+    # 注: 以前这里是 glob 整个 shots_live/ 再配一张硬编码付费名单 —— 每跑一次真机就多出一堆
+    #     同版面帧, 名单没跟上就假失败(2026-09-03 04:00 挂了 17 项)。真值只准从 shots/ 来。
+    frames = dict(label_frames('chest_info'))
+    n_ci = 0
+    for nm, img in sorted(frames.items()):
+        is_paid = '_paid' in nm
+        ctx = Ctx(img)
+        run(ci, img, ctx)
+        x, y = ctx.clicks[0] if len(ctx.clicks) == 1 else (-1, -1)
+        on_btn = ci.BTN_BOX[0] <= x <= ci.BTN_BOX[2] and ci.BTN_BOX[1] <= y <= ci.BTN_BOX[3]
+        check(on_btn != is_paid, 'chest_info/%s 点击 %s(应该%s)'
+              % (nm, ctx.clicks, '只点关闭' if is_paid else '点中黄按钮'))
+        n_ci += 1
+    n_paid = sum(1 for nm in frames if '_paid' in nm)
+    check(n_paid >= 4 and n_ci >= 14,
+          'chest_info 真值帧太少(共 %d, 付费 %d) -> 语料被清了?' % (n_ci, n_paid))
+    print('    %d 帧(含 %d 张付费)全程没读一个字' % (n_ci, n_paid))
+
     print('')
     if FAILS:
         print('不通过 %d 项:' % len(FAILS))
         for m in FAILS:
             print('  - ' + m)
         return 1
-    print('全部通过 (result/chest_open/lobby 动作层零 OCR)')
+    print('全部通过 (result/chest_open/lobby/chest_info 动作层零 OCR)')
     return 0
 
 

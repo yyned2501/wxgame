@@ -215,9 +215,11 @@ def main():
         'flow4_s1_after_continue': 'u...', 'flow4_s2_later': 'u...',   # 与 lobby_clean 槽1 同帧(yb=0 w=392)=点击解锁
         'live_20260902_a': 'o...', 'live_20260902_b': 'o...', 'live_20260902_c': 'o...',
         'live_20260902_d': 'o...', 'lobby_chest_ready_2355': 'o...', 'lobby_live013938': 'o...',
+        'lobby_live014158': 'o...',                      # 槽1[开启]满金, 槽2-4 空槽位
         'live_lobby': 'uuua', 'live_now2': 'uuuo', 'lobby_clean': 'uuuu',
         'guide_live2': 'ouuu', 'lobby_cooling_2335': 'a...', 'lobby_live010807': 'a...',
         'lobby_mixed_0019': 'au..', 'lobby_live004222': '.u..', 'lobby_live010733': 'uo..',
+        'lobby_live035055': 'ou..',                      # 槽1[开启] + 槽2[点击解锁](15分) 同时存在
     }
     lp = LobbyPage()
     n_chk = 0
