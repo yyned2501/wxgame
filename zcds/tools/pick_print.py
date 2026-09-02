@@ -39,24 +39,41 @@ LABELS = {
               'shots/bg_after', 'shots/bg_before', 'shots/expl_a_slot', 'shots/expl_b_after_slot', 'shots/flow_0_lobby',
               'shots/flow_1_after_pvp_click', 'shots/flow4_s1_after_continue', 'shots/flow4_s2_later',
               'shots/live_lobby', 'shots/live_now2', 'shots/lobby_clean', 'shots/probe_flag2', 'shots/screen_current',
-              'shots/step0_main', 'shots/step1_battle_entry', 'shots/view1', 'shots/guide_live2'],
+              'shots/step0_main', 'shots/step1_battle_entry', 'shots/view1', 'shots/guide_live2',
+              'shots/live_20260902_a', 'shots/live_20260902_b', 'shots/live_20260902_c', 'shots/live_20260902_d',
+              'shots/lobby_cooling_2335', 'shots/lobby_chest_ready_2355', 'shots/lobby_mixed_0019'],
     'battle': ['shots/battle_full', 'shots/exp_battle0', 'shots/exp_click50', 'shots/flow2_m0', 'shots/flow2_m1',
                'shots/flow2_m2', 'shots/flow2_m3', 'shots/flow2_m4', 'shots/flow2_m5', 'shots/flow3_r0', 'shots/sample4',
-               'shots/watch_124607', 'shots/watch_124633'],
+               'shots/watch_124607', 'shots/watch_124633', 'shots/battle_live_004258',
+               'shots/battle_live_004301', 'shots/battle_live_004305',
+               'shots/battle_live_004308', 'shots/battle_live_004311',
+               'shots/battle_live_004314'],
     'result': ['shots/flow3_end1', 'shots/flow3_r1', 'shots/flow4_s0_result', 'shots/now', 'shots/st_1',
                'shots/help_live', 'shots/watch_124652', 'shots/watch_124654',
                'shots/watch_124656', 'shots/watch_124658', 'shots/watch_124700',
                'shots/watch_124705', 'shots/watch_124707'],
     'chest_info': ['shots/chestinfo', 'shots/stuck_010826', 'shots/stuck_011012',
                    'shots/stuck_011157', 'shots/stuck_011347', 'shots/stuck_011536',
-                   'shots/stuck_011716'],
+                   'shots/stuck_011716', 'shots/chest_info_iron_2334'],
     'vip_popup': ['shots/ask_battle', 'shots/live_now', 'shots/now_state', 'shots/p0'],
-    'vip_month': ['shots/st_2'],                       # 月卡礼包弹窗(vip_popup 的另一种形态)
+    'vip_month': ['shots/st_2', 'shots/vip_month_0003'],                       # 月卡礼包弹窗(vip_popup 的另一种形态)
     'matching': ['shots/sm_after'],
+    'chest_open': ['shots/chest_open_claim', 'shots/chest_open_close', 'shots/chest_open_reward'],
     'other': ['shots/dbg', 'shots/probe_flag0', 'shots/st_0', 'shots/guide_live1', 'shots/guide_live3', 'shots/watch_124711',
               'shots/watch_124723', 'shots/watch_124735', 'shots/watch_124746',
-              'shots/watch_124758'],
+              'shots/watch_124758', 'shots/other_quest_0022'],
 }
+# ---- 自动登记真机帧: 只要把 shots_live 挑出来的帧按 <label>_live<HHMMSS>.png 放进 shots/,
+#      这里就自动并入 LABELS, 不必再手改本文件(标定闭环少一步 manual)。
+_live_added = {}
+for _lbl in list(LABELS):
+    _known = {os.path.splitext(os.path.basename(n))[0] for n in LABELS[_lbl]}
+    for _p in sorted(glob.glob(os.path.join(ROOT, 'shots', _lbl + '_live*.png'))):
+        if os.path.splitext(os.path.basename(_p))[0] not in _known:
+            LABELS[_lbl].append('shots/' + os.path.basename(_p))
+            _live_added.setdefault(_lbl, 0)
+            _live_added[_lbl] += 1
+
 # 归到同一"页面身份"的标签(同一 Page 类的多种形态)
 GROUPS = {'vip_popup': ['vip_popup', 'vip_month']}
 

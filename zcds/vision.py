@@ -1,11 +1,16 @@
-﻿# -*- coding: utf-8 -*-
-"""特征提取层: 截图 + 指纹门控 + ROI OCR -> ScreenFeature
+# -*- coding: utf-8 -*-
+"""特征提取层: 抓帧(零 OCR) + 按需 OCR -> ScreenFeature
+
+设计铁律: 点色优先。定页面、点哪里, 能用颜色就绝不碰 OCR。
+真机实测(帧 552x1006, scratch/scripts/bench_route.py 2026-09-03):
+  点色全表 2.2ms | 全图 OCR 675ms | 本页 ROI OCR 369ms
+  => 点色比全图 OCR 快 ~309 倍, 一轮最多省 673ms
+OCR 只留给"动作层非读文字不可"的页面(宝箱价格护栏/按钮文案), 且只裁本页 ROI。
 
 CPU 优化:
   - onnxruntime 线程数在 ocr_config.yaml 限制(intra=2/inter=1), 峰值封顶
-  - 指纹门控: 画面没大变化就不跑 OCR, 只做 PrintWindow+缩略图对比(几ms)
-  - 小变化(倒计时/动画)按 ocr_gap 周期刷新; 大变化(跳页/弹窗)立即全图 OCR
-  - 战斗页完全不用 OCR: 用 battle_scan 颜色扫描(每次 ~10ms)
+  - grab() 零 OCR: 只做 PrintWindow + 缩略图对比(几 ms)
+  - ocr() 按需才调: 没到 min_gap / 画面没大变化就直接复用上轮文字(0ms)
 """
 import os, time
 from dataclasses import dataclass
@@ -65,7 +70,10 @@ class ScreenFeature:
 
 
 class Vision:
-    """截图 + OCR 引擎. 每轮调用 current(region, scale, force, min_gap)."""
+    """抓帧 + 按需 OCR 引擎.
+
+    主循环每轮 grab() (零 OCR); 只有 act() 声明需要文字的页面才再调 ocr().
+    """
 
     def __init__(self, hwnd, config_path=None):
         self.hwnd = hwnd
@@ -73,6 +81,7 @@ class Vision:
         self._ocr = None
         self._prev_fp = None
         self._cached = None
+        self._cache_key = None        # 当前缓存对应的 (region, scale)
         self._last_ocr = 0.0
         self.changed_small = True
         self.changed_big = True
@@ -90,7 +99,7 @@ class Vision:
         return np.asarray(small, dtype=np.int16)
 
     def grab(self):
-        """抓一帧并更新变化门限(不做 OCR, 成本几十ms)"""
+        """抓一帧并更新变化门限(零 OCR, 真机实测 ~31ms)"""
         img, _ = g.capture_window(self.hwnd)
         fp = self._fingerprint(img)
         if self._prev_fp is None:
@@ -103,26 +112,33 @@ class Vision:
         return img
 
     def reset(self):
+        """换句柄/窗口被缩放: 旧特征与缓存全部作废"""
         self._prev_fp = None
         self.changed_small = self.changed_big = True
         self._cached = None
+        self._cache_key = None
 
     def refresh_hwnd(self, hwnd):
         self.hwnd = hwnd
         self.reset()
 
-    # ---- 主入口 ----
-    def current(self, region=None, scale=0.5, force=False, min_gap=6.0):
-        """一轮特征提取. 返回 (ScreenFeature, ocr_ran: bool).
-        region: (fx0,fy0,fx1,fy1) 坐标比例; None=全图
+    # ---- 主入口: 按需 OCR ----
+    def ocr(self, img, region=None, scale=0.5, force=False, min_gap=6.0):
+        """按需 OCR. 返回 (ScreenFeature, ocr_ran: bool)
+
+        img    : grab() 拿到的当前帧(点色定页用不着它, 动作层要读字才调)
+        region : (fx0,fy0,fx1,fy1) 坐标比例; None=全图
+        换 ROI/缩放、force、画面大变化(跳页·弹窗)、超过 min_gap 才真跑一次 OCR,
+        否则直接复用上轮文字坐标(ocr_ran=False) —— 省 CPU 全靠这一步。
         """
-        self._ensure_ocr()
         now = time.time()
-        img = self.grab()
-        due = force or self.changed_big or (now - self._last_ocr) >= min_gap
+        key = (None if region is None else tuple(round(v, 3) for v in region), scale)
+        due = (force or key != self._cache_key or self.changed_big
+               or (now - self._last_ocr) >= min_gap)
         if not due and self._cached is not None:
             self._cached.img = img        # 画面基本没变, 旧文字坐标仍有效
             return self._cached, False
+        self._ensure_ocr()
         w, h = img.size
         if region is None:
             crop = img
@@ -144,8 +160,13 @@ class Vision:
                 x1, y1 = int(max(xs) * inv) + ox, int(max(ys) * inv) + oy
                 boxes.append(TBox(text, x0, y0, x1 - x0, y1 - y0))
         self._cached = ScreenFeature(img=img, boxes=boxes, joined=' '.join(b.text for b in boxes))
+        self._cache_key = key
         self._last_ocr = now
         return self._cached, True
+
+    def current(self, region=None, scale=0.5, force=False, min_gap=6.0):
+        """兼容旧调用(取证/离线脚本): 自己抓一帧再按需 OCR"""
+        return self.ocr(self.grab(), region, scale, force, min_gap)
 
     # ---- 战斗颜色扫描(无 OCR) ----
     @staticmethod

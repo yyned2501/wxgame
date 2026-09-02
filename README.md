@@ -43,6 +43,7 @@
   同时往 `scratch/MANIFEST.tsv` 记一条「原相对路径 -> 现相对路径 -> 字节数」，配 `restore.py` 能一键搬回。
 - 日志（`bot.log`）是历史记录，**不去改写它里面的旧路径**，保持原样。
 - 文本行尾：`.py` 用 BOM+CRLF 或无 BOM+CRLF 都行，但**不允许同一文件里混着 CRLF 和裸 LF**。
-- 没有 git。所以任何「整理」都只做移动，不做删除。
+- 仓库已经入 git（`main` 分支）。但入库的只有**代码与依赖**：`shots/` `capture/` `dec/` `game_src/` `unity_data/` `tools/` `scratch/` `shots_live/` `bot.log` 等逆向资料与产物全部写在 `.gitignore` 里。
+- 即便有 git，「整理」仍然**只搬不删**：git 只救得了入库文件，被 ignore 的东西删掉就真没了。
 - 搬家要可逆：`zcds\scratch\restore.py`（还原 scratch 归档）、`zcds\scratch\relocate.py`（把整个游戏
   文件夹挪回上一级或别的目录），两个都支持 `--dry-run`，且绝不覆盖已存在的目标。

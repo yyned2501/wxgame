@@ -1,4 +1,4 @@
-﻿# 降低微信/微信小游戏进程的 CPU 抢占: 优先级 + 可选限核
+# 降低微信/微信小游戏进程的 CPU 抢占: 优先级 + 可选限核
 # 用法: powershell -NoProfile -ExecutionPolicy Bypass -File set_low_cpu.ps1 -Priority BelowNormal [-AffinityCores 6]
 param(
     [ValidateSet('Normal','AboveNormal','BelowNormal','Idle')][string]$Priority = 'BelowNormal',

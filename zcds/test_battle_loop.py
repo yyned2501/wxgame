@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """离线回归: 连续两场战斗之间必须清空 clicked_cells (不开窗口 / 不真点击)
 
 缺陷(2026-08-31 实测出来的):
@@ -7,6 +7,11 @@
   格子 key 是固定窗口坐标, 每场战斗复用同一批 key
   -> 打上几场之后整张棋盘被永久拉黑, 战斗页再也点不出手.
 修复位置: auto_bot.py 主循环, 进入 battle 页时 clicked_cells.clear() + last_cell = 0
+
+2026-09-03 点色优先改造后的变化:
+  battle 页 act_needs_ocr=False -> 定页只看点色指纹(实测 2ms), 整轮零 OCR,
+  所以"进入战斗页的那一帧"就应当直接出手, 不再像旧版那样白等一轮去补 OCR 特征;
+  紧接着的第二帧会被 CELL_COOLDOWN(5s) 挡住, 不会同一格连点两下。
 
 用法(项目根目录): python -X utf8 test_battle_loop.py     退出码 0 = 通过
 """
@@ -53,13 +58,13 @@ def check(cond, msg):
 
 
 def play(app, shot, n=1):
-    """喂 n 轮同一帧, 返回 [(acted, 已点格子数, 本轮点击)]"""
+    """喂 n 轮同一帧, 返回 [(页, acted, 已点格子数, 本轮点击, 本轮是否跑了OCR)]"""
     out = []
     QUEUE[:] = [shot]
     for _ in range(n):
         before = len(CLICKS)
-        page, acted, ocr = app.step()
-        out.append((page.name, acted, len(app.clicked_cells), CLICKS[before:]))
+        page, acted, ocr_ran = app.step()
+        out.append((page.name, acted, len(app.clicked_cells), CLICKS[before:], ocr_ran))
     return out
 
 
@@ -78,9 +83,12 @@ def main():
     r1 = play(app, 'shots/battle_full.png', 2)
     for row in r1:
         print('   ', row)
-    entered, first = r1[0], r1[1]
-    check(entered[0] == 'battle' and not entered[1], '进战斗页第一帧不动作(等特征补齐)')
-    check(first[0] == 'battle' and first[1] and first[3], '第 1 场战斗点了格子')
+    first, cooled = r1[0], r1[1]
+    check(first[0] == 'battle' and first[1] and first[3],
+          '进入战斗页的第一帧就出手(点色定页, 不再白等一轮补 OCR)')
+    check(not first[4], '战斗页定页+动作整轮零 OCR(旧版全图 OCR ~722ms/轮)')
+    check(cooled[0] == 'battle' and not cooled[3],
+          '5s 内的第二帧被 CELL_COOLDOWN 拦住 -> 不会同一格连点两下')
     if not first[3]:
         print('  前置条件就挂了, 后面不测')
         return 1
@@ -98,24 +106,23 @@ def main():
           '还没开新一场时, 上一场的 clicked_cells 依然保留 (实测 %d)' % len(app.clicked_cells))
 
     print('--- 第 2 场战斗(关键: 同一张棋盘) ---')
-    r4 = play(app, 'shots/battle_full.png', 2)
-    for row in r4:
-        print('   ', row)
-    reenter, second = r4[0], r4[1]
-    check(reenter[0] == 'battle', '再次进战斗页')
-    check(reenter[2] == 0, '进战斗页时 clicked_cells 已被清空 (实测 %d)' % reenter[2])
-    check(reenter[3] == [], '重进的那一帧没有动作')
-    check(second[1] and second[3], '第 2 场战斗仍然点了格子 —— 修复前这里必然 acted=False')
-    if second[3]:
-        check(second[3][0] == cell1,
+    r4 = play(app, 'shots/battle_full.png', 1)
+    print('   ', r4[0])
+    re = r4[0]
+    check(re[0] == 'battle', '再次进战斗页')
+    check(re[1] and re[3] and re[2] == 1,
+          '进场帧就清空 clicked_cells 并当场出手 —— 修复前这里必然 acted=False')
+    if re[3]:
+        check(re[3][0] == cell1,
               '点的正是第 1 场已经点过的同一个格子 %s -> 证明确实靠清空才放行' % (cell1,))
+    check(not re[4], '第 2 场进场帧同样零 OCR')
 
     print('--- 第 3 场(再验一次幂等) ---')
     play(app, 'shots/flow4_s0_result.png', 1)
     play(app, 'shots/lobby_clean.png', 1)
-    r5 = play(app, 'shots/battle_full.png', 2)
+    r5 = play(app, 'shots/battle_full.png', 1)
     check(len(app.clicked_cells) == 1, '第 3 场进场又清空 -> 只留本场 1 格 (实测 %d)' % len(app.clicked_cells))
-    check(r5[1][1], '第 3 场依然能出手')
+    check(r5[0][1], '第 3 场依然能出手')
 
     print()
     if FAILS:

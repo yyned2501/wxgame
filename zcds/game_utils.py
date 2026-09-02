@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """占城大师 微信小游戏自动脚本 - 公共工具: 切桌面、找窗口、截图、点击"""
 import ctypes, ctypes.wintypes as wt, time, sys
 from PIL import Image
@@ -63,6 +63,37 @@ def capture_window(hwnd, flag=2):
     u32.ReleaseDC(hwnd, hdc)
     img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1)
     return img.convert('RGB'), ok
+
+def window_size(hwnd):
+    """当前窗口外框尺寸 (w, h); 句柄无效时返回 (0, 0)"""
+    left, top, right, bottom = get_rect(hwnd)
+    return right - left, bottom - top
+
+
+def set_window_size(hwnd, w, h, keep_pos=True):
+    """把窗口外框设为 w x h —— 点色指纹的标定基准尺寸。
+
+    指纹色块是在 552x1006 上标定的, 窗口一旦被缩放, 色块就错位 -> 指纹层整片失效,
+    所以机器人启动/每轮都要把窗口钉回基准尺寸。
+    返回 (是否达标, 实际宽, 实际高)。
+    """
+    cur_w, cur_h = window_size(hwnd)
+    if cur_w < 2 or cur_h < 2:
+        # 窗口已关 / 假句柄(离线测试): GetWindowRect 拿不到矩形, 不做任何操作
+        return False, cur_w, cur_h
+    if cur_w == w and cur_h == h:
+        return True, cur_w, cur_h
+    SW_RESTORE = 9
+    if u32.IsZoomed(hwnd):            # 最大化时先还原, 否则 MoveWindow 无效
+        u32.ShowWindow(hwnd, SW_RESTORE)
+        time.sleep(0.25)
+    left, top, _, _ = get_rect(hwnd)
+    if not keep_pos:
+        left, top = 0, 0
+    u32.MoveWindow(hwnd, left, top, w, h, True)
+    time.sleep(0.25)
+    now_w, now_h = window_size(hwnd)
+    return (now_w == w and now_h == h), now_w, now_h
 
 def click_window(hwnd, x, y, duration=0.08):
     """在窗口内坐标 (x, y) 点击 (SendInput)"""

@@ -1,19 +1,30 @@
-﻿# -*- coding: utf-8 -*-
-"""会员/礼包/优惠弹窗: 点X或遮罩关闭"""
+# -*- coding: utf-8 -*-
+"""会员/礼包/优惠弹窗: 只关闭, 绝不点任何购买/领取/续订按钮
+
+真机 2026-09-03 00:03 修正(dry-run 复现): 关闭键是红底白叉**图形**, OCR 读不到 ->
+旧版只找 'X'/'关闭' 关键字, 找不到就点遮罩, 而且每轮都点同一个 (270,860),
+8 轮全在重复同一个无效点击, 月卡弹窗根本关不掉。
+现在优先用 base.find_close_badge() 按颜色定位真正的 X(实测 15~20ms/帧, 94 帧 0 误报),
+遮罩只作最后兜底并轮换点位。弹窗类页面一律"只关不确认", 含钻石字样时更不碰任何按钮。
+"""
 import logging
 
-from .base import Page
+from .base import Page, find_close_badge
 
 POPUP_KW = ('月卡', '特权', '立刻获取', '购买礼包', '超值', '续订', '优惠')
-MASK_POINTS = [(270, 860), (270, 300), (30, 300), (520, 300), (270, 200)]
+# 遮罩兜底点: 只挑面板外的空白, 压到宝箱行(838~882)的那个放最后
+MASK_POINTS = [(270, 200), (30, 300), (520, 300), (270, 860)]
 
 
 class VipPopupPage(Page):
     name = 'vip_popup'
     next_pages = ('lobby', 'unknown')
+    _mask_i = 0
+    act_needs_ocr = False     # 关闭键靠颜色定位(find_close_badge), 文字键才惰性补 OCR
 
     # 点色指纹: 由 tools/pick_print.py pick --label vip_popup|vip_month 自动标定(勿手改)
-    # 2 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 vip_popup; 语料 5/5 全中 / 异页误中 0 / margin 0.13(异页最高只中 2/15 点) / 各形态覆盖 [4, 1] 帧
+    # 2 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 vip_popup; 语料 6/6 全中 / 异页误中 0 / margin 0.07(异页最高只中 1/15 点) / 各形态覆盖 [4, 2] 帧
+    #   2026-09-03 重标第2组: 旧月卡指纹在真机 00:03 那帧只中 5/15(弹窗有动画), 改挑两帧都稳的文字行 y538
     prints = (
         (   # 来自 vip_popup
             [308, 312, 0xFFFFFF], [310, 312, 0xFFFFFF], [306, 312, 0xF5F6F5],
@@ -22,12 +33,12 @@ class VipPopupPage(Page):
             [196, 350, 0xFFFFFF], [324, 356, 0xFFFFFF], [326, 356, 0xFFFFFD],
             [322, 356, 0xFFFFFF], [324, 358, 0xFFFFFF], [324, 354, 0xFFFFFF],
         ),
-        (   # 来自 vip_month
-            [328, 244, 0xFFFFFF], [330, 244, 0xFFFFFF], [326, 244, 0xFAF8D9],
-            [328, 246, 0xFFFFFF], [328, 242, 0xFBF6D6], [352, 408, 0xFFFFFF],
-            [354, 408, 0xFFFFFF], [350, 408, 0xF8F5E9], [352, 410, 0xF1EDDD],
-            [352, 406, 0xFEFEFB], [240, 536, 0xFFFFFF], [242, 536, 0xEAEAEA],
-            [238, 536, 0xFDFDFD], [240, 538, 0xFFFFFF], [240, 534, 0xF9F9F9],
+        (   # 来自 vip_month(语料 st_2 + 真机 00:03 月卡弹窗)
+            [112, 538, 0xFFFFFF], [114, 538, 0xFEFEFE], [110, 538, 0xFFFFFF],
+            [112, 540, 0x9D82DC], [112, 536, 0x940B11], [216, 538, 0xFFFFFF],
+            [218, 538, 0xA1A1A1], [214, 538, 0xFFFFFF], [216, 540, 0xF8F8F8],
+            [216, 536, 0xECECEC], [272, 538, 0xFFFFFF], [274, 538, 0xEBEBEB],
+            [270, 538, 0xBEBEBE], [272, 540, 0xF8F8F8], [272, 536, 0xFFFFFF],
         ),
     )
 
@@ -36,21 +47,28 @@ class VipPopupPage(Page):
 
     def act(self, ctx):
         f = ctx.f
-        # 钻石相关绝不确认
-        if f.has('钻石'):
-            logging.info('[弹窗] 含钻石, 只关闭')
-        # X/关闭按钮
+        img = getattr(f, 'img', None)
+        # 1) 红底白叉关闭徽章(真机实测: 特权弹窗(464,307) / 月卡弹窗(455,461))
+        if img is not None:
+            badge = find_close_badge(img)
+            if badge:
+                if not ctx.acted('vip_badge', gap=8.0):
+                    logging.info(f'[弹窗] 点关闭徽章 {badge}')
+                    ctx.click(*badge)
+                return True
+        # 2) 文字形态的关闭键(排除弹窗正中的文字) —— 颜色徽章没中才现补一次本页 OCR
+        f = ctx.need_text()
         for t in ('X', 'x', '×', '✕', '关闭', '取消'):
             for bx in f.find_boxes(t):
-                if bx.cx < 250 or bx.cx > 300:      # 排除弹窗正中的文字
+                if bx.cx < 250 or bx.cx > 300:
                     if not ctx.acted('vip_close'):
                         logging.info(f'[弹窗] 点 {t} {bx.center}')
                         ctx.click(*bx.center)
                         return True
-        # 遮罩
-        for pt in MASK_POINTS:
-            if not ctx.acted('vip_mask'):
-                logging.info(f'[弹窗] 点遮罩 {pt}')
-                ctx.click(*pt)
-                return True
-        return False
+        # 3) 最后才点遮罩, 且轮换点位
+        pt = MASK_POINTS[self._mask_i % len(MASK_POINTS)]
+        self._mask_i += 1
+        if not ctx.acted('vip_mask', gap=2.0):
+            logging.info(f'[弹窗] 点遮罩 {pt}')
+            ctx.click(*pt)
+        return True

@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
-"""页面基类 + 路由(点色指纹定页面, OCR 文字只做兜底/动作层)
+"""页面基类 + 路由(定页面只看点色; OCR 是最后兜底, 动作层读字另说)
 
-路由规则借鉴 mxdzz/ctrl.py:
-  1) 页面身份 = 点色指纹全中(pages/*.py 的 points), 不再靠 OCR 文字猜
-  2) 上一步动作声明的候选页(next_pages ~ mxdzz 的 link)优先查, 命中即用
-  3) 按 ALL_PAGES 注册顺序查其余(弹窗在前, unknown 在最后)
-  4) 全都没全中 -> 退回 OCR detect 打分(应对窗口被遮挡/新页面), 再不行 unknown
+三级路由(2026-09-03 定案: OCR 又慢又不准, 识别成功后一律用点色 —— 全表点色 2.2ms, 全图 OCR 675ms):
+  1) 指纹全中      先查上一步声明的候选页(next_pages ~ mxdzz 的 link) -> src='print-prefer',
+                   再按 ALL_PAGES 注册顺序(弹窗在前, unknown 在最后) -> src='print-order'
+  2) 软命中        只差 <=1 个点且甩开第二名 >=0.20 -> src='print-*-soft';
+                   仍然算点色定页, 依然不跑 OCR(主循环要求连续 2 帧同页才动手, 见 auto_bot)
+  3) 全图 OCR      前两级一点收据都没有(新页面/被别的窗口挡住/改版)才花这份钱 -> src='ocr',
+                   同分时再用点色部分命中率 tie-break, 再不行 unknown
+门限常量与推导见本文件"软命中"一节 + COLORPRINT.md §6.1; 回归锁在
+test_print_route.py[10] / test_zero_ocr.py / test_cpu_offline.py 场景7。
 """
 import logging
+import re
 
 from colorprint import (DEFAULT_DEGREE, DEFAULT_POS_TOL, is_multi_color, print_score,
                         to_arr)
@@ -22,9 +27,15 @@ class Page:
       prints      可选: 同页多形态的多组指纹(任一全中即算本页)
       degree      颜色相似度(默认 85 => 每通道 ±19)
       pos_tol     坐标容差像素(默认 1, 吸收窗口缩放取整)
-      next_pages  执行动作后可能跳转的页面名(= mxdzz 的 link)
-      act(ctx)    干本页的事, 返回是否执行了动作
-      detect(f)   文字特征兜底分(动作层也常用它判断按钮/文案)
+      next_pages     执行动作后可能跳转的页面名(= mxdzz 的 link)
+      act_needs_ocr  本页动作层是否真的需要读文字(默认 True; 纯点色页设 False)
+      act(ctx)       干本页的事, 返回是否执行了动作
+      detect(f)      文字特征兜底分(动作层也常用它判断按钮/文案)
+
+    点色优先: 定页面和点哪里一律先用颜色, OCR 又慢又不准。
+    真机实测一轮: 点色全表 2.2ms / 全图 OCR 675ms / 本页 ROI OCR 369ms。
+    所以 act_needs_ocr=False 的页面主循环干脆不跑 OCR, 只有指纹没全中、
+    或动作层非读文字不可(价格护栏/按钮文案)时才花这份钱。
     """
     name = 'base'
     next_pages = ()
@@ -33,6 +44,7 @@ class Page:
     prints = ()
     degree = DEFAULT_DEGREE
     pos_tol = DEFAULT_POS_TOL
+    act_needs_ocr = True       # False=动作层纯点色, 主循环就别为本页跑 OCR
 
     @classmethod
     def fingerprints(cls):
@@ -67,46 +79,112 @@ class Page:
         return f'<Page {self.name}>'
 
 
+# ---- 软命中: 点色没全中但"只差一个点"时的放行门限 ------------------
+# 坑(真机 2026-09-03 01:42 日志): 战斗页满屏都在动, 指纹里只要有一个点被动画遮住
+#     就不算"全中" -> 旧版整轮回退到全图 OCR(675ms)+靠文字猜页, 又慢又不准。
+# 规则(三条同时成立才算软命中, 少一条就老实退回 OCR 兜底):
+#   1) 参评指纹至少 SOFT_MIN_PTS 个点 —— 否则"1 个点没中"也满足"差<=1 点", 白送给弹窗页
+#   2) 最多缺 SOFT_MAX_MISS 个点(按该指纹自身点数换算成分数门限)
+#   3) 甩开第二名至少 SOFT_MIN_MARGIN —— 防两张相似页在半途中转帧上互相冒充
+SOFT_MIN_PTS = 8
+SOFT_MAX_MISS = 1
+SOFT_MIN_MARGIN = 0.20
+
+
+def best_print(page, arr):
+    """本页最强指纹 -> (命中比例, 该指纹点数); 没指纹的页返回 (0.0, 0)"""
+    best, n = 0.0, 0
+    for fp in page.fingerprints():
+        if not fp:
+            continue
+        s = print_score(arr, fp, page.degree, page.pos_tol)
+        if s > best:
+            best, n = s, len(fp)
+    return best, n
+
+
+def soft_hit(scored):
+    """从"没全中"的各页分数里挑软命中 -> (page|None, score, src)"""
+    cand = [(s, n, p, src) for s, n, p, src in scored
+            if n >= SOFT_MIN_PTS and s >= 1.0 - SOFT_MAX_MISS / n]
+    if not cand:
+        return None, 0.0, None
+    cand.sort(key=lambda r: -r[0])
+    s0, _n, p0, src = cand[0]
+    runner = max([s for s, _n2, p2, _src in scored if p2 is not p0] + [0.0])
+    return (p0, s0, src) if s0 - runner >= SOFT_MIN_MARGIN else (None, 0.0, None)
+
+
 def match_print(pages, img, prefer=()):
     """点色指纹匹配. 返回 (page|None, score, src)
-    src: 'prefer'=转移候选内命中 / 'order'=注册顺序命中 / None=没全中
+    src: 'prefer'/'order' = 指纹全中; '<src>-soft' = 只差<=1 点的软命中;
+         None = 点色没收据, 才允许花 OCR 兜底
     """
     arr = to_arr(img)
     preferred = [p for p in pages if p.name in prefer]
     rest = [p for p in pages if p.name not in prefer]
-    best, best_s = None, -1.0
+    scored = []
     for group, src in ((preferred, 'prefer'), (rest, 'order')):
         for p in group:
-            s = p.print_score(arr)
+            s, n = best_print(p, arr)
             if s >= 1.0:
                 return p, s, src
-            if s > best_s:
-                best, best_s = p, s
-    return None, max(best_s, 0.0), None
+            scored.append((s, n, p, src))
+    page, score, src = soft_hit(scored)
+    if page is not None:
+        return page, score, src + '-soft'
+    return None, max([s for s, _n, _p, _src in scored] + [0.0]), None
 
 
-def detect_ocr(pages, f):
-    """OCR 文字兜底: 按 detect 分数选页面"""
-    best, best_score = None, -1.0
+def route_prints(pages, img, prefer=()):
+    """纯点色定页(绝不碰 OCR). 返回 (page|None, score, src)
+
+    主循环每轮先调它: 只有返回 None(全中和软命中都没有)才允许花 OCR 去兜底。
+    """
+    return match_print(pages, img, prefer)
+
+
+def is_soft(src):
+    """定页结果是否来自软命中"""
+    return bool(src) and src.endswith('-soft')
+
+
+def detect_ocr(pages, f, arr=None):
+    """OCR 文字兜底: 按 detect 分数选页面.
+
+    并列最高分时用"点色指纹部分命中率"做 tie-break: 常驻文案会串页
+    (大厅右上角一直挂着"月卡", 和 vip_popup 的关键词一模一样),
+    但页面专属色块不会. 没有指纹的页(弹窗类)自然得 0, 让位给有指纹的页.
+    """
+    scored = []
     for p in pages:
         try:
             s = p.detect(f)
         except Exception:
             logging.exception('页面 %s detect 异常', p.name)
             continue
-        if s > best_score:
-            best, best_score = p, s
-    if best is None or best_score < 0.3:
+        scored.append((p, s))
+    if not scored:
         return pages[-1], 0.0
-    return best, best_score
+    best_score = max(s for _, s in scored)
+    if best_score < 0.3:
+        return pages[-1], 0.0
+    tied = [p for p, s in scored if s >= best_score - 1e-9]
+    if len(tied) > 1:
+        if arr is None:
+            arr = getattr(f, 'img', None)
+        if arr is not None:
+            tied.sort(key=lambda p: p.print_score(arr), reverse=True)
+    return tied[0], best_score
 
 
 def route(pages, f, prefer=()):
     """完整路由. 返回 (page, score, src)  src in {'print-prefer','print-order','ocr','unknown'}"""
+    arr = to_arr(f.img) if getattr(f, 'img', None) is not None else None
     page, score, src = match_print(pages, f.img, prefer)
     if page is not None:
         return page, score, 'print-' + src
-    ocr_page, ocr_score = detect_ocr(pages, f)
+    ocr_page, ocr_score = detect_ocr(pages, f, arr)
     if ocr_page.name != pages[-1].name:
         return ocr_page, ocr_score, 'ocr'
     return ocr_page, 0.0, 'unknown'
@@ -115,3 +193,99 @@ def route(pages, f, prefer=()):
 def select_page(pages, f, prefer=()):
     """兼容旧调用: 只要页面对象"""
     return route(pages, f, prefer)[0]
+
+# ---- 宝箱"真在倒计时"判据(真机 2026-09-02 23:35 定案; lobby 与 chest_info 共用) ----
+# 坑: 卡片角标上的"5分/10分/20分"是**开箱所需时长**, 不是剩余倒计时, 拿它判冷却会把
+#     所有"可以免费开始开箱"的槽位一律误判成忙, 而且解锁后角标"0时19分55秒"还会被
+#     OCR 读成"1+$5"这种乱码 -> 旧版靠它判冷却两头都错。
+# 真在倒计时的只有这两种形态(都是解锁之后才出现的):
+#   角标 "0时19分55秒" / 加速按钮 "[AD] -30分钟"(点它就是看广告, WATCH_ADS=False 时绝不点)
+COUNTDOWN_RE = re.compile(r'\d+\s*时\s*\d+\s*分|\d+\s*分\s*\d+\s*秒|-\s*\d+\s*分')
+
+
+def is_countdown(text):
+    """text 里出现"真在倒计时"的形态 -> True; 光秃秃的"20分"(所需时长)不算"""
+    return bool(COUNTDOWN_RE.search(text or ''))
+
+# ---- 红底白叉"关闭"徽章定位(真机 2026-09-03 00:03 定案) ----
+# 坑: 弹窗右上角的关闭键是**图形**, 不是文字 -> OCR 永远读不到它。
+#     旧版 vip_popup 只找 'X'/'关闭' 关键字, 找不到就点遮罩, 而且每次都点同一个遮罩点,
+#     真机 dry-run 复现: 月卡弹窗 8 轮全在重复点 (270,860), 弹窗根本关不掉。
+# 判据: 红底 + 白叉的小方块, 颜色/尺寸极稳 —— 77 张语料 + 17 张真机帧里
+#     只有"弹窗关闭键"这一种元素满足(0 误报), 且与手工标定的
+#     chest_info.CLOSE_POS=(470,167) 只差 2px。实测单帧 7~11ms。
+CLOSE_RED_MIN_PX = 550      # 红底像素数(实测 716~818)
+CLOSE_RED_MAX_PX = 950
+CLOSE_BOX_MIN = 30          # 外接框边长(实测 36~48)
+CLOSE_BOX_MAX = 60
+CLOSE_WHITE_MIN = 60        # 框内白像素=那个叉(实测 142~163)
+
+
+def find_close_badge(img, cell=12):
+    """整帧找红底白叉关闭徽章 -> (x, y); 没有则 None. 多个候选取最靠右的(关闭键都在右上)"""
+    import numpy as np
+    a = np.asarray(img.convert('RGB'), dtype=np.int16)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    red = (r > 185) & (g < 105) & (b < 105) & ((r - np.maximum(g, b)) > 90)
+    white = (r > 200) & (g > 200) & (b > 200)
+    h, w = red.shape
+    gh, gw = h // cell, w // cell
+    grid = red[:gh * cell, :gw * cell].reshape(gh, cell, gw, cell).sum(axis=(1, 3))
+    seen = np.zeros((gh, gw), dtype=bool)
+    cands = []
+    for i in range(gh):
+        for j in range(gw):
+            if not grid[i, j] or seen[i, j]:
+                continue
+            stack, cells = [(i, j)], []
+            seen[i, j] = True
+            while stack:
+                y, x = stack.pop()
+                cells.append((y, x))
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        ny, nx = y + dy, x + dx
+                        if 0 <= ny < gh and 0 <= nx < gw and grid[ny, nx] and not seen[ny, nx]:
+                            seen[ny, nx] = True
+                            stack.append((ny, nx))
+            ys = [c[0] for c in cells]
+            xs = [c[1] for c in cells]
+            y0, y1 = min(ys) * cell, (max(ys) + 1) * cell
+            x0, x1 = min(xs) * cell, (max(xs) + 1) * cell
+            sub = red[y0:y1, x0:x1]
+            n = int(sub.sum())
+            if not CLOSE_RED_MIN_PX <= n <= CLOSE_RED_MAX_PX:
+                continue
+            if not (CLOSE_BOX_MIN <= x1 - x0 <= CLOSE_BOX_MAX
+                    and CLOSE_BOX_MIN <= y1 - y0 <= CLOSE_BOX_MAX):
+                continue
+            pts = np.argwhere(sub)
+            cy = int(pts[:, 0].mean()) + y0
+            cx = int(pts[:, 1].mean()) + x0
+            hw, hh = (x1 - x0) // 2, (y1 - y0) // 2
+            if int(white[cy - hh:cy + hh + 2, cx - hw:cx + hw + 2].sum()) < CLOSE_WHITE_MIN:
+                continue
+            cands.append((cx, cy))
+    if not cands:
+        return None
+    return max(cands)
+
+# ---- 侧页"返回箭头"判据(真机 2026-09-03 00:22 定案) ----
+# 坑: 任务/商店/英雄这类侧页左下角有个青色返回箭头, 页面本身没进指纹表 -> 判成 unknown,
+#     而 unknown 只会瞎点遮罩, 挂机就此卡死(用户手动停在任务页时必现)。
+# 判据: 量左下角小框里的青色像素数 —— 任务页 463 / 大厅·结算·宝箱面板 0 / 战场页 1860。
+#     战场页虽然也青但它是已知页(轮不到兜底), 而且远超上限, 双重保险。
+BACK_ARROW_POS = (63, 970)                 # 箭头中心(真机实测)
+BACK_ARROW_BOX = (38, 950, 90, 992)        # 取样框 x0,y0,x1,y1
+BACK_ARROW_MIN_PX = 150
+BACK_ARROW_MAX_PX = 1000
+
+
+def is_back_arrow(img):
+    """左下角像"返回箭头"(而不是整片青色背景) -> True"""
+    import numpy as np
+    x0, y0, x1, y1 = BACK_ARROW_BOX
+    a = np.asarray(img.convert('RGB'), dtype=np.int16)[y0:y1, x0:x1]
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    n = int(((b > 170) & (g > 140) & (r < 150)).sum())
+    return BACK_ARROW_MIN_PX <= n <= BACK_ARROW_MAX_PX

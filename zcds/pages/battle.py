@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """战斗页: 自动点格子. 用颜色扫描做识别(无 OCR, ~10ms/次)
 
 策略(用户确认):
@@ -35,33 +35,33 @@ def rank_cell(c):
 class BattlePage(Page):
     name = 'battle'
     next_pages = ('result',)
-
+    act_needs_ocr = False     # 战斗页纯点色(颜色扫描 + 指纹), 一轮都不该碰 OCR
     # 点色指纹: 由 tools/pick_print.py pick --label battle 自动标定(勿手改)
-    # 3 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 battle; 语料 13/13 全中 / 异页误中 0 / margin 0.20(异页最高只中 3/15 点) / 各形态覆盖 [13, 2, 1] 帧
+    # 2 种形态 x 5 个十字单元(每单元 5 点, 共 25 判色点/形态), 任一形态全中即判为 battle; 语料 40/40 全中 / 异页误中 0 / margin 0.12 / 各形态覆盖 [13, 27] 帧
     prints = (
-        (   # 形态: battle_full/exp_battle0/exp_click50...
-            [292, 60, 0xFFFFFF], [294, 60, 0xCCCBCB], [290, 60, 0xF0F0F0],
-            [292, 62, 0x919090], [292, 58, 0xB5A5A5], [152, 108, 0xFFFFFF],
-            [154, 108, 0xFDFDFD], [150, 108, 0x979A9C], [152, 110, 0xCFCFCF],
-            [152, 106, 0xFFFFFF], [96, 112, 0xFFFFFF], [98, 112, 0xF4F4F4],
-            [94, 112, 0xFCFCFC], [96, 114, 0x669BB4], [96, 110, 0x658DA0],
+        (   # 形态: shots/battle_full/shots/exp_battle0/shots/exp_click50...
+            [68, 192, 0xFFFFFF], [70, 192, 0x682F30], [66, 192, 0x904042],
+            [68, 194, 0xFFFFFF], [68, 190, 0xCAC9C9], [500, 212, 0xFFFFFF],
+            [502, 212, 0xFFFFFF], [498, 212, 0xB7B6B6], [500, 214, 0xFFFFFF],
+            [500, 210, 0xCDCDCD], [212, 772, 0xFFFFFF], [214, 772, 0xFFFFFF],
+            [210, 772, 0xFFFFFF], [212, 774, 0xFFFFFF], [212, 770, 0xFFFFFF],
+            [80, 868, 0xFFFFFF], [82, 868, 0x6B6C6B], [78, 868, 0x667756],
+            [80, 870, 0xF3F3F3], [80, 866, 0xDDDDDD], [60, 820, 0xFEFEFE],
+            [62, 820, 0xFEFEFE], [58, 820, 0xEFEFEF], [60, 822, 0xFEFEFE],
+            [60, 818, 0x587937],
         ),
-        (   # 形态: watch_124607/watch_124633
-            [292, 60, 0xFFFFFF], [294, 60, 0xCCCBCB], [290, 60, 0xF0F0F0],
-            [292, 62, 0x919090], [292, 58, 0xB5A5A5], [396, 104, 0xFFFFFF],
-            [398, 104, 0xFDFDFD], [394, 104, 0xFFFFFF], [396, 106, 0x782629],
-            [396, 102, 0xBABABA], [152, 108, 0xFFFFFF], [154, 108, 0xFDFDFD],
-            [150, 108, 0x979A9C], [152, 110, 0xCFCFCF], [152, 106, 0xFFFFFF],
-        ),
-        (   # 形态: sample4
-            [292, 60, 0xFFFFFF], [294, 60, 0xCCCBCB], [290, 60, 0xF0F0F0],
-            [292, 62, 0x919090], [292, 58, 0xB5A5A5], [456, 104, 0xFFFFFF],
-            [458, 104, 0x825C5D], [454, 104, 0xAAAAAA], [456, 106, 0xFFFFFF],
-            [456, 102, 0x978080], [152, 108, 0xFFFFFF], [154, 108, 0xFDFDFD],
-            [150, 108, 0x979A9C], [152, 110, 0xCFCFCF], [152, 106, 0xFFFFFF],
+        (   # 形态: shots/battle_live_004258/shots/battle_live_004301/shots/battle_live_004305...
+            [72, 196, 0xFFFFFF], [74, 196, 0x7A749E], [70, 196, 0x595185],
+            [72, 198, 0xEFEFF0], [72, 194, 0xFFFFFF], [504, 212, 0xFFFFFF],
+            [506, 212, 0xFFFFFF], [502, 212, 0xFFFFFF], [504, 214, 0xFFFFFF],
+            [504, 210, 0xFEFEFE], [456, 216, 0xFFFFFF], [458, 216, 0x686096],
+            [454, 216, 0xE7E7E7], [456, 218, 0xFFFFFF], [456, 214, 0x716A98],
+            [80, 868, 0xFFFFFF], [82, 868, 0x626262], [78, 868, 0xBCB8B5],
+            [80, 870, 0xD9D9D9], [80, 866, 0xFCFCFC], [60, 820, 0xFEFEFE],
+            [62, 820, 0xFEFEFE], [58, 820, 0xFBFBFB], [60, 822, 0xE7E7E7],
+            [60, 818, 0xE9E9E9],
         ),
     )
-
     def detect(self, f):
         if f.has('时间', '时间剩余'):
             return 0.9
@@ -80,8 +80,10 @@ class BattlePage(Page):
 
     def act(self, ctx):
         cells = scan_battle_cells(ctx.f.img)
-        # 防护: 扫描兜底路径下(没有"时间"文字)至少要能看到矿, 防止点到大厅横幅数字
-        if not ctx.f.has('时间', '时间剩余') and not any(c['mine'] for c in cells):
+        # 防护: 点色指纹已全中 = 确认在战斗页, 直接放行(不为此跑 OCR, 省 ~315ms);
+        #       只有靠颜色扫描兜底定页时, 才要求至少看到矿, 防止点到大厅横幅数字
+        if (not ctx.print_confirmed and not ctx.f.has('时间', '时间剩余')
+                and not any(c['mine'] for c in cells)):
             return False
         clickable = [c for c in cells if c['white']]
         if not clickable:

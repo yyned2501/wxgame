@@ -1,11 +1,23 @@
-# 本项目刻意统一 CRLF(2026-08 手工归一化过, 混合行尾文件 = 0)
-# 所以禁止 git 做任何行尾转换, 否则 checkout 回来的文件会和标定/比对结果不一致
+# 本项目刻意统一 CRLF(2026-08 手工归一化过, 混合行尾文件 = 0), 归一脚本: zcds\scratch\patch\normalize_eol.py
+# 所以禁止 git 做任何行尾转换 —— 否则 checkout 回来的文件会和标定/比对结果不一致。
+# ⚠ 但不要给源码写 binary(2026-09-03 修): binary 是 "-text -diff" 的宏,
+#   用了它 git diff --stat 只显示 Bin、GitHub 上完全看不到改动内容; 禁止转换交给上面的 * -text 就够了。
 * -text
-*.py    binary
-*.md    binary
-*.yaml  binary
-*.txt   binary
-*.ps1   binary
+
+# 只有真二进制才需要 binary:
 *.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
 *.npz   binary
-*.json  binary
+*.npy   binary
+*.exe   binary
+*.dll   binary
+*.pyd   binary
+*.zip   binary
+*.7z    binary
+*.pdf   binary
+*.docx  binary
+*.xlsx  binary
+*.pptx  binary
