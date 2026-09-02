@@ -1,24 +1,39 @@
 # -*- coding: utf-8 -*-
 """主页(lobby): 自动开宝箱 -> 开始玩家对战"""
-import logging, re
+import logging
 
-from .base import Page, is_countdown
+from .base import Page, color_button, color_pixels
 
 CHEST_SLOTS = [(109, 855), (220, 855), (331, 855), (441, 855)]
 # ^ 2026-09-02 重标定: 旧值 (95,741)... 落在卡片顶边外(卡片实占 y738..879), 且 x 取自金币角标图标(偏左 14px),
-#   真机 19 次点击全部落空. 现值 = 4 张卡片实测中心 x(109/220/331/441) + 操作按钮行 y=855(真机"开启"金色块 840..870)
+#   真机 19 次点击全部落空. 现值 = 4 张卡片实测中心 x(109/220/331/441) + 操作按钮行 y=855(真机[开启]金色块 840..870)
 CHEST_BAND = (695, 790)
-# ---- 真机 2026-09-02 23:35 / 23:55 定案: 只看卡片底部那一行按钮文字 ----
-#   [点击解锁] -> 槽上有宝箱, 点它**免费**开始开箱(顶栏 156/143/1002 点前点后完全不变)
-#   [[AD] -30分钟] -> 正在倒计时, 点它=看广告加速(WATCH_ADS=False 时绝不点)
-#   [开启](真机常被 OCR 读成"开咖") -> 倒计时结束, 宝箱可领, 点它开箱
-#   空槽位/空精位 -> 槽上没宝箱, 且那一行**没有文字**(空槽位的文字在 y~811 的标题行)
-# 已删除的陷阱: TIMER_RE=r'\d+\s*[分时秒]' 扫全卡带, 把角标 5分/10分/20分 当成剩余倒计时,
-#   而那其实是"开箱所需时长"(语料 lobby_clean: 4 格同时有 5分@y741 和 点击解锁@y853)。
-# 按钮行(真机 4 帧实测: 点击解锁 y853..862 / 开启 y858 / -30分钟 y861; 标题行 y810..826)
-BTN_BAND = (838, 882)
-# 按钮行出现这些字样 = 不是免费动作, 一律不点
-SKIP_RE = re.compile('AD|ad|钻石|广告|看视频|\\d+\\s*[时分秒]|^\\d+$')
+# ^ 卡片[标题带](宝箱名/时长角标那一行). 判据本身不用它, 它只被 test_print_route.py [8] 拿去断言
+#   [点色指纹不许罩住角标行] —— 角标颜色随宝箱档位变, 罩进去就成假指纹。
+
+# ---- 动作层点色(2026-09-03 定案: 零 OCR) --------------------------------
+# 四张宝箱卡片的操作按钮长得几乎一样, 但颜色构成完全不同, 数颜色比读字稳得多:
+#   [开启]    = 整块纯金, 左边没东西挡   -> 按钮框黄 1235~1241, 左半黄 380~400
+#   [[AD]加速] = 金按钮左边贴了张蓝票券图标 -> 按钮框黄  789~818, 左半黄只剩 123~133
+#   [点击解锁] = 深色底白字(点它[免费]开箱) -> 按钮框黄 0, 白 143~176
+#   空槽位     = 那一行没有按钮            -> 全 0
+# 上面是 33 帧 lobby 语料 x 4 槽 = 132 个观测的实测区间, 逐帧与 OCR 真值核对过
+# (复核脚本 scratch/scripts/slot_truth2.py, 输出 scratch/o_truth2.txt; 改阈值后重跑它即回归)。
+# 阈值取法: 黄 >=500 才算有金按钮(实测 789 vs 0); 左半黄 >=250 判[开启](实测 380 vs 123);
+#   白 >=120 判[点击解锁](实测 143~176, 而[开启]/[[AD]]按钮自带的白描边只有 70~100, 120 留安全边际)。
+# 票券图标色 AAE4FF/6FC2F2/223F6B 与金色不搭, 所以只数金色就能把[开启]和[[AD]]分开。
+# 注意 [[AD]] 那一格点下去 = 看激励视频加速, WATCH_ADS=False 时一律不点。
+CHEST_BTN_COLOR = 0xFDCA33
+CHEST_WHITE = 0xFFFFFF
+CHEST_BTN_BAND = (838, 882)     # 按钮行 y 范围(标题行在 y810..826, 不许混进来)
+CHEST_BTN_HALF = 45             # 卡片宽 ~111, 半宽 45 足够且不串邻列
+CHEST_YELLOW_MIN = 500
+CHEST_OPEN_LEFT_MIN = 250
+CHEST_UNLOCK_WHITE_MIN = 120
+# [玩家对战]按钮: 也是同一套金色, 语料 33 帧实测 n=6405~6539, 外接框中心恒为 (180,675)
+PVP_BOX = (60, 640, 290, 720)
+PVP_COLOR = 0xFDCA33
+PVP_MIN_PX = 3000
 
 
 class LobbyPage(Page):
@@ -53,63 +68,57 @@ class LobbyPage(Page):
         ),
     )
 
+    act_needs_ocr = False   # 纯点色页: 主循环不为本页跑 OCR(定页仍优先看点色指纹, 与此无关)
+
     def detect(self, f):
+        # 只有点色指纹全不中、回落到 OCR 判页时才会走到这里。
+        # 注: 语料 33 帧里 OCR 一次都没读出[玩家对战]四个字(字体描边太细),
+        #     旧版动作层正是靠 f.find('玩家对战') 点按钮, 所以它从来没点着过 —— 见 act()。
         return 1.0 if f.has('玩家对战') else 0.0
 
-    def _ready_chests(self, f):
-        """返回可点的宝箱槽位(左→右); 判据 = **卡片底部按钮行**(BTN_BAND)里的文字
+    @staticmethod
+    def _slot_boxes(cx):
+        """(整按钮框, 按钮左半框) —— 左半用来看有没有被蓝色票券图标挡住"""
+        y0, y1 = CHEST_BTN_BAND
+        return ((cx - CHEST_BTN_HALF, y0, cx + CHEST_BTN_HALF, y1), (cx - 34, 846, cx - 14, 874))
 
-        真机实测 2026-09-02 23:34~23:55(单点 click_at + 只读探针, 四帧连续取证):
-          23:34 底部[点击解锁]  -> 点它**免费**开始开箱(顶栏 156/143/1002 点前点后不变)
-          23:35 底部[[AD] -30分钟] -> 正在倒计时, 点它=看广告加速 -> 绝不点
-          23:55 倒计时归零, 底部[开启] -> 宝箱可领(OCR 把"开启"读成了"开咖")
-          空槽位的卡片: 按钮行**根本没有文字**("空槽位"三个字在 y~811 的标题行)
-        所以这里用**排除式**: 按钮行有文字 且 不像广告/倒计时 => 就是那个免费按钮。
-        不用正面匹配"解锁|开启", 因为 2 个字的按钮 OCR 很容易读错("开启"->"开咖"),
-        正面匹配会把已经能领的宝箱漏掉(23:55 实测就是这样漏的)。
-        旧版两处根因错误(真机反复点空/永远不开箱的真凶, 不是坐标错):
-          1) TIMER_RE 扫全卡带, 把角标 5分/10分/20分(=开箱所需时长)当成剩余倒计时
-             -> 4 个免费宝箱一律误判成"忙";
-          2) 解锁后真倒计时 0时19分55秒 被 OCR 读成乱码 -> 判不出冷却, 反过来误报就绪。
-        现在角标一律不参与判断(它在 BTN_BAND 之外)。无 OCR 框时返回 [](宁可不点)。
-        """
-        cols = {i: [] for i in range(len(CHEST_SLOTS))}
-        for b in f.boxes:
-            if not BTN_BAND[0] <= b.cy <= BTN_BAND[1]:
-                continue
-            for i, (sx, _sy) in enumerate(CHEST_SLOTS):
-                if abs(b.cx - sx) < 45:      # 同列(卡片宽 ~111, 45 足够且不串邻列)
-                    cols[i].append(b.text)
-                    break
-        ready = []
-        for i, (sx, sy) in enumerate(CHEST_SLOTS):
-            joined = ''.join(cols[i])
-            if not joined:                    # 空槽位 / 没读到字 -> 不点
-                continue
-            if is_countdown(joined) or SKIP_RE.search(joined):
-                continue                      # 广告加速 / 花钻石 -> 不点
-            ready.append((sx, sy))            # 剩下的就是[点击解锁]/[开启]这类免费按钮
-        return ready
+    def chest_states(self, img):
+        """逐槽点色判状态 -> 4 字符码: o=[开启] u=[点击解锁] a=[[AD]加速] .=空槽"""
+        out = []
+        for cx, _cy in CHEST_SLOTS:
+            btn, left = self._slot_boxes(cx)
+            if color_pixels(img, btn, CHEST_BTN_COLOR) >= CHEST_YELLOW_MIN:
+                out.append('o' if color_pixels(img, left, CHEST_BTN_COLOR) >= CHEST_OPEN_LEFT_MIN else 'a')
+            elif color_pixels(img, btn, CHEST_WHITE) >= CHEST_UNLOCK_WHITE_MIN:
+                out.append('u')
+            else:
+                out.append('.')
+        return ''.join(out)
+
+    def _ready_chests(self, img):
+        """可点的宝箱槽位(左->右): o/u 是免费动作才点, a/. 一律不点。判据见 chest_states()"""
+        st = self.chest_states(img)
+        return [slot for slot, code in zip(CHEST_SLOTS, st) if code in 'ou']
+
     # 轮换游标(真机教训: 旧版死点 ready[0], 那一格若点了没跳转就永远卡在同一坐标)
     _chest_i = 0
 
     def act(self, ctx):
-        f = ctx.f
-        # 1) 开宝箱: 卡片底部写着[点击解锁]/[开启] = 免费可开(判据见 _ready_chests 真机实测)
-        ready = self._ready_chests(f)
+        img = ctx.f.img      # act_needs_ocr=False => ctx.f 只有图没有文字框, 别用 ctx.f.find()
+        # 1) 开宝箱: 按钮是纯金[开启] 或 白字[点击解锁] = 免费可点
+        ready = self._ready_chests(img)
         if ready:
             i = self._chest_i % len(ready)
             sx, sy = ready[i]
             if not ctx.acted('chest_open'):
                 self._chest_i = i + 1
-                logging.info(f'[主页] 宝箱可开 {len(ready)} 格, 点第 {i + 1} 格 ({sx},{sy})')
+                logging.info(f'[主页] 宝箱状态 {self.chest_states(img)} 可开 {len(ready)} 格, 点第 {i + 1} 格 ({sx},{sy})')
                 ctx.click(sx, sy)
                 return True
-        # 2) 玩家对战
-        pts = f.find('玩家对战')
-        if pts:
-            if not ctx.acted('pvp_click'):
-                logging.info(f'[主页] 点 玩家对战 {pts[0]}')
-                ctx.click(*pts[0])
-                return True
+        # 2) 玩家对战: 认那块金色按钮的外接框中心(旧版要 OCR 读[玩家对战], 读不到就永远不点)
+        pos = color_button(img, PVP_BOX, PVP_COLOR, PVP_MIN_PX)
+        if pos is not None and not ctx.acted('pvp_click'):
+            logging.info(f'[主页] 点色命中玩家对战 {pos}')
+            ctx.click(*pos)
+            return True
         return False

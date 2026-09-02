@@ -2,7 +2,9 @@
 """离线集成测试: 不依赖真实窗口. 验证"点色优先"后主循环行为
 
 核心期望: 定页只看点色指纹(2ms/轮); 只有 act_needs_ocr=True 的页面才裁 ROI 跑 OCR,
-          战斗/匹配等纯点色页整轮零 OCR; 画面无大变化时复用上一帧 OCR 缓存。
+          战斗/大厅/结算/开箱等纯点色页整轮零 OCR; 画面无大变化时复用上一帧 OCR 缓存。
+          现在只剩 chest_info(价格护栏)/ad_popup/claim_popup 三页还要读字 ——
+          缓存复用与 reset() 作废这两个护栏只能拿它们验, 所以场景2/6 用的是宝箱面板。
 """
 import logging, os, sys
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -84,19 +86,22 @@ def run(tag):
     return page, acted, ocr_ran
 
 
-# ---------- 场景1: 大厅连续两帧 -> 第二帧复用 OCR 缓存 ----------
+# ---------- 场景1: 大厅纯点色(2026-09-03 定案) -> 连动作层都不许读字, 两帧全零 OCR ----------
 QUEUE[:] = ['shots/lobby_clean.png', 'shots/lobby_clean.png']
 p1, a1, o1 = run('lobby1')
 p2, a2, o2 = run('lobby2')
 print(f'[1] 大厅帧1: page={p1.name} acted={a1} ocr={o1} / 帧2: page={p2.name} acted={a2} ocr={o2}')
-check(p1.name == 'lobby' and o1, '大厅帧1: 点色定页, 只为动作读一次本页 ROI')
-check(p2.name == 'lobby' and not o2, '大厅帧2: 画面没大变化也没到 ocr_gap -> 复用缓存不 OCR')
+check(p1.name == 'lobby' and a1 and not o1, '大厅帧1: 点色定页 + 点色认宝箱槽/对战按钮, 整轮零 OCR')
+check(p2.name == 'lobby' and not o2, '大厅帧2: 依旧零 OCR(旧版这里每帧都要 ROI OCR 369ms)')
 
-# ---------- 场景2: 大厅 -> 宝箱弹窗(价格护栏必须读字) ----------
-QUEUE[:] = ['shots/chestinfo.png']
+# ---------- 场景2: 宝箱弹窗(唯一还依赖 OCR 的动作: 价格护栏) + 两帧缓存复用 ----------
+QUEUE[:] = ['shots/chestinfo.png', 'shots/chestinfo.png']
 p3, a3, o3 = run('chest')
-print(f'[2] 变到宝箱面板: page={p3.name} acted={a3} ocr={o3}')
+p3b, a3b, o3b = run('chest2')
+print(f'[2] 宝箱面板帧1/2: page={p3.name}/{p3b.name} acted={a3}/{a3b} ocr={o3}/{o3b}')
 check(p3.name == 'chest_info' and o3, '宝箱面板: 指纹定页 + 读价格(护栏依赖 OCR)')
+check(p3b.name == 'chest_info' and not o3b,
+      '宝箱面板帧2: 画面没大变化也没到 ocr_gap -> 复用缓存不 OCR')
 
 # ---------- 场景3: 战斗页整轮零 OCR(点色扫描) ----------
 app._act_gap = 0
@@ -126,14 +131,14 @@ check(p.name == 'battle' and ocr_cnt == 0, f'战斗循环 8 轮 OCR 次数 = 0 (
 QUEUE[:] = ['shots/flow4_s0_result.png']
 p7, a7, o7 = run('result')
 print(f'[5] 结算页: page={p7.name} acted={a7} ocr={o7}')
-check(p7.name == 'result' and o7, '结算页: 指纹定页 + 读按钮文案')
+check(p7.name == 'result' and a7 and not o7, '结算页: 指纹定页 + 点色认[继续]按钮, 整轮零 OCR')
 
-# ---------- 场景6: vision.reset() 后缓存必须作废 ----------
-QUEUE[:] = ['shots/flow_0_lobby.png']
+# ---------- 场景6: vision.reset() 后 OCR 缓存必须作废(大厅已零 OCR, 只能用宝箱面板验) ----------
+QUEUE[:] = ['shots/chestinfo.png']
 app.vision.reset()
-p8, a8, o8 = run('lobby_again')
-print(f'[6] 大厅2: page={p8.name} acted={a8} ocr={o8}')
-check(p8.name == 'lobby' and o8, 'reset() 后首帧重新 OCR —— 旧缓存不能跨窗口尺寸复用')
+p8, a8, o8 = run('chest_again')
+print(f'[6] reset 后宝箱面板: page={p8.name} acted={a8} ocr={o8}')
+check(p8.name == 'chest_info' and o8, 'reset() 后首帧重新 OCR —— 旧缓存不能跨窗口尺寸复用')
 
 # ---------- 场景7: 软命中(动画遮住 1 个指纹点) -> 稳帧才动手, 全程零 OCR ----------
 # 这是 2026-09-03 01:42 真机失效的最小复现: 那时代码一见差 1 点就整轮回退全图 OCR + 文字猜页
@@ -157,7 +162,7 @@ QUEUE[:] = ['shots/battle_full.png']
 f4 = run('back_to_full')
 check(f4[2] is False, '回到全中帧: 点色直接定页, 不受刚才软命中影响')
 
-FRAMES = 2 + 1 + 3 + 8 + 1 + 1 + 4   # 七个场景一共喂了多少帧
+FRAMES = 2 + 2 + 3 + 8 + 1 + 1 + 4   # 七个场景一共喂了多少帧
 print()
 print(f'共 {FRAMES} 帧, OCR 只跑了 {OCR_STEPS} 次 (旧版: 每帧一次全图 OCR = {FRAMES} 次)')
 if FAILS:

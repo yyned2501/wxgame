@@ -128,6 +128,54 @@ def missing_points(img, points: Sequence[Point],
             if not is_color(arr, x, y, c, degree, pos_tol)]
 
 
+# ---------------------------------------------------------------- 区域点色(动作层)
+# 定页面看指纹, "点哪里"同样优先看颜色: 一次 ROI 数像素远快于一次 OCR, 且不受
+# 花哨字体/描边影响(真机教训: OCR 把"开启"读成"开咖"、"点击继续"读成"点击维续")。
+# 前提: 窗口被 auto_bot.ensure_window_size() 钉死成 REF_SIZE => 绝对像素框合法。
+def _clip_box(img, box):
+    """(x0,y0,x1,y1) 裁剪到图内 -> 有效框; 空框返回 None"""
+    h, w = to_arr(img).shape[:2]
+    x0, y0, x1, y1 = (int(v) for v in box)
+    x0, x1 = max(0, min(x0, w)), max(0, min(x1, w))
+    y0, y1 = max(0, min(y0, h)), max(0, min(y1, h))
+    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+
+
+def color_mask(img, box, color: int,
+               degree: float = DEFAULT_DEGREE) -> np.ndarray:
+    """box 内命中该色的 bool 掩码(坐标相对 box 左上)"""
+    b = _clip_box(img, box)
+    if b is None:
+        return np.zeros((0, 0), dtype=bool)
+    x0, y0, x1, y1 = b
+    sub = to_arr(img)[y0:y1, x0:x1, :3].astype(np.int16)
+    ref = np.array(c2rgb(color), dtype=np.int16)
+    return (np.abs(sub - ref) <= tolerance(degree)).all(axis=2)
+
+
+def color_count(img, box, color: int, degree: float = DEFAULT_DEGREE) -> int:
+    """box 内该色像素个数 —— 判此处现在是不是这种按钮/有没有这个色块"""
+    return int(color_mask(img, box, color, degree).sum())
+
+
+def color_bbox(img, box, color: int, degree: float = DEFAULT_DEGREE,
+               min_px: int = 1):
+    """box 内该色色块的外接框 -> (中心x, 中心y, 像素数); 像素数 < min_px -> None
+
+    中心取外接框中点而不是质心: 色块上压着文字/图标时质心会被拽偏, 中点不会。
+    """
+    b = _clip_box(img, box)
+    if b is None:
+        return None
+    m = color_mask(img, box, color, degree)
+    n = int(m.sum())
+    if n < min_px:
+        return None
+    ys, xs = np.nonzero(m)
+    return (b[0] + (int(xs.min()) + int(xs.max())) // 2,
+            b[1] + (int(ys.min()) + int(ys.max())) // 2, n)
+
+
 # ---------------------------------------------------------------- 区域图案搜索
 def _shift_map(org: np.ndarray, dy: int, dx: int) -> np.ndarray:
     """out[i, j] = org[i + dy, j + dx], 越界补 0  (mxdzz: reshape_same_size)"""

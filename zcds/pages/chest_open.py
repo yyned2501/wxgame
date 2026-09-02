@@ -8,7 +8,7 @@ unknown 兜底连续 8 次(85 秒)才靠瞎点遮罩混过去 —— 现在按�
 """
 import logging
 
-from .base import Page
+from .base import Page, color_button, color_pixels
 
 CLAIM_KW = ('点击领取奖励', '领取奖励')
 CLOSE_KW = ('点击关闭',)
@@ -29,6 +29,24 @@ class ChestOpenPage(Page):
         [270, 930, 0xB6B6B6], [272, 932, 0x1A172F], [272, 928, 0xFFFFFF],
     ]
 
+    # ---- 动作层点色(2026-09-03 定案: 零 OCR) --------------------------------
+    # 底部那行按钮文字是全屏唯一的白色大块(底 0x2E265F), 数它有多少白像素就认它。
+    # 语料 3 帧实测(白像素数 / 外接框中心, degree90 = 每通道 +-13):
+    #   领取态 chest_open_claim : bot=1969 中心(275,917)  左上[跳过]还在 skip=833
+    #   关闭态 chest_open_close : bot=1394 中心(275,917)  skip=0
+    #   奖励态 chest_open_reward: bot=1394 中心(275,917)  skip=0
+    # 两种文案的按钮中心完全重合 => 一次取色通吃, 不必分辨字面(旧版要靠 OCR 认"领取/关闭")。
+    # 选框验证: 把框放大到 (150,780,410,990) 计数与中心都不变 => 该区域内除按钮文字无别的白色,
+    #   这里取稍紧的 BOT_BOX, 阈值 600 落在 1394 与 0(动画还在放, 按钮未出)之间。
+    # 跳过按钮(左上)同理: 白字块 833px, 中心(82,142); 放大到 (0,100,220,200) 计数不变(没裁到字)。
+    # 顺带干掉旧版的第三个 OCR 分支(找"跳过"二字): 动画期只认左上那块白, 不再读字。
+    WHITE = 0xFFFFFF
+    BOT_BOX = (150, 880, 410, 960)
+    BOT_MIN_PX = 600
+    SKIP_BOX = (20, 120, 160, 175)
+    SKIP_MIN_PX = 300
+    act_needs_ocr = False   # 纯点色页: 主循环不为本页跑 OCR
+
     def detect(self, f):
         if f.has(*CLAIM_KW):
             return 1.4
@@ -37,18 +55,21 @@ class ChestOpenPage(Page):
         return 0.0
 
     def act(self, ctx):
-        f = ctx.f
-        # 1) 底部主按钮: 先领取(开箱动画结束), 再关闭(奖励展示完)
-        for kws, tag in ((CLAIM_KW, 'claim'), (CLOSE_KW, 'close')):
-            pts = [p for kw in kws for p in f.find(kw)]
-            if pts and not ctx.acted('chest_open_' + tag, gap=6.0):
-                logging.info(f'[开箱动画] 点 {pts[0]}')
-                ctx.click(*pts[0])
-                return True
-        # 2) 动画还在放(底部按钮未出现): 点左上[跳过]直接进奖励展示, 省一半等待
-        pts = f.find('跳过')
-        if pts and not ctx.acted('chest_open_skip', gap=8.0):
-            logging.info(f'[开箱动画] 按钮未出, 点跳过 {pts[0]}')
-            ctx.click(*pts[0])
+        img = ctx.f.img          # act_needs_ocr=False => ctx.f 只有图, 没有文字框
+        # 1) 底部主按钮: 白色文字块出现即点(先领取后关闭, 中心同一点)
+        bot = color_button(img, self.BOT_BOX, self.WHITE, self.BOT_MIN_PX)
+        if bot is not None:
+            # 左上[跳过]还在 = 刚放完动画的"领取奖励"态; 它消失后底部就是"关闭"态
+            tag = 'claim' if color_pixels(img, self.SKIP_BOX, self.WHITE) >= self.SKIP_MIN_PX else 'close'
+            if ctx.acted('chest_open_' + tag, gap=6.0):
+                return False
+            logging.info(f'[开箱动画] 点色命中底部按钮({tag}) {bot}')
+            ctx.click(*bot)
+            return True
+        # 2) 动画还在放(底部按钮未出): 点左上[跳过]直接进奖励展示, 省一半等待
+        skip = color_button(img, self.SKIP_BOX, self.WHITE, self.SKIP_MIN_PX)
+        if skip is not None and not ctx.acted('chest_open_skip', gap=8.0):
+            logging.info(f'[开箱动画] 按钮未出, 点色跳过 {skip}')
+            ctx.click(*skip)
             return True
         return False

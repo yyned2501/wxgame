@@ -21,7 +21,7 @@ import colorprint as cp                        # 判色原语(造「只差一个
 import pick_print as pp                        # 复用同一份语料标注, 不两处维护
 from pages import ALL_PAGES
 from pages.base import detect_ocr, is_soft, route, route_prints, soft_hit
-from vision import ScreenFeature, TBox
+from vision import ScreenFeature
 
 FAILS = []
 
@@ -195,86 +195,57 @@ def main():
         print('    %-28s 卡片带 y%d..%d  列块 %s' % (base, y0, y1, runs))
 
 
-    print('[9] _ready_chests: 判据=卡片底部按钮文字(真机 23:35 定案: 点击解锁=免费可点)')
-    from pages.lobby import LobbyPage, CHEST_SLOTS as SLOTS
+    print('[9] 宝箱槽位/玩家对战: 动作层点色判据, 码表须与人工核对过的真值一致(零 OCR)')
+    from pages.lobby import (LobbyPage, CHEST_SLOTS as SLOTS, PVP_BOX, PVP_COLOR, PVP_MIN_PX)
+    from pages.base import color_button
 
-    def card(cx, cy, text):
-        """模拟一个 OCR 框: 宽 80 高 24, 中心落在 (cx,cy)"""
-        return TBox(text, cx - 40, cy - 12, 80, 24)
-
-    def with_boxes(name, boxes):
-        f = feat(name)
-        f.boxes = list(boxes)
-        f.joined = ' '.join(x.text for x in f.boxes)
-        return f
-
+    # 真值来源: 2026-09-03 逐槽用 OCR 读出按钮文字再人工订正, 与点色判据 132 个观测全部对上
+    # (复核脚本 scratch/scripts/slot_truth2.py, 明细 scratch/o_truth2.txt; 改阈值后重跑它即回归)
+    #   o=[开启]倒计时结束免费领  u=[点击解锁]槽上有宝箱点它免费  .=空槽位(按钮行没东西)
+    #   a=[[AD]-30分钟]冷却中 —— 点它=看激励视频, WATCH_ADS=False 时绝不点
+    # 已核对过的 OCR 误读(点色判据比它准): live_lobby 槽4 / guide_live2 槽1(开启读成"开")
+    #   / lobby_cooling_2335 / lobby_mixed_0019 / lobby_live010807 槽1(-30分钟读成"-30分神")
+    EXPECT = {
+        'after_battle_btn': '....', 'after_click': '....', 'after_click2': '....',
+        'before_click': '....', 'bg_after': '....', 'bg_before': '....',
+        'expl_a_slot': '....', 'expl_b_after_slot': '....', 'flow_0_lobby': '....',
+        'flow_1_after_pvp_click': '....', 'probe_flag2': '....', 'screen_current': '....',
+        'step0_main': '....', 'step1_battle_entry': '....', 'view1': '....',
+        'lobby_live014209': '....',
+        'flow4_s1_after_continue': 'u...', 'flow4_s2_later': 'u...',   # 与 lobby_clean 槽1 同帧(yb=0 w=392)=点击解锁
+        'live_20260902_a': 'o...', 'live_20260902_b': 'o...', 'live_20260902_c': 'o...',
+        'live_20260902_d': 'o...', 'lobby_chest_ready_2355': 'o...', 'lobby_live013938': 'o...',
+        'live_lobby': 'uuua', 'live_now2': 'uuuo', 'lobby_clean': 'uuuu',
+        'guide_live2': 'ouuu', 'lobby_cooling_2335': 'a...', 'lobby_live010807': 'a...',
+        'lobby_mixed_0019': 'au..', 'lobby_live004222': '.u..', 'lobby_live010733': 'uo..',
+    }
     lp = LobbyPage()
-    # 真机实测偏移(语料 lobby_clean): 标题/按钮文字都比槽位中心偏左 ~25px, 角标偏左 ~14px
-    # 常驻横幅"竞技场4解锁"在 y=641(CARD_BAND 之外), x=384 距槽4 中心 57px(>45) -> 双重安全
-    BANNER = card(384, 641, '竞技场4解锁')
-
-    def badge(i, text):
-        return TBox(text, SLOTS[i][0] - 14 - 40, 741 - 12, 80, 24)
-
-    # a) 4 格全空 + 4 个"所需时长"角标 + 常驻横幅 -> 一个都不能点
-    empty = ([card(sx - 29, 817, '空槽位') for sx, _ in SLOTS]
-             + [badge(i, t) for i, t in enumerate(('5分', '10分', '5分', '05分'))]
-             + [BANNER])
-    r = lp._ready_chests(with_boxes('lobby_clean', empty))
-    check(r == [], '4 格全空却仍判为可开, 实际 %s' % (r,))
-
-    # b) 槽1 摆着宝箱(标题 竞技场2 + 底部 点击解锁) -> 只返回槽1(横幅不得算成槽4)
-    one = [card(109 - 27, 826, '竞技场2'), card(109 - 26, 855, '点击解锁'),
-           card(220 - 29, 817, '空槽位'), badge(1, '10分'), BANNER]
-    r = lp._ready_chests(with_boxes('lobby_clean', one))
-    check(r == [SLOTS[0]], '槽1[点击解锁]应返回槽1, 实际 %s' % (r,))
-
-    # c) 关键回归: 角标"20分"是**开箱所需时长**, 不是剩余倒计时 -> 仍必须判为可点
-    #    (旧版 TIMER_RE 把它当冷却, 真机上 4 个免费宝箱一律误判成"忙", 永远不开箱)
-    r = lp._ready_chests(with_boxes('lobby_clean', one + [badge(0, '20分')]))
-    check(r == [SLOTS[0]], '所需时长角标 20分 不得当成冷却, 实际 %s' % (r,))
-
-    # d) 已解锁正在倒计时: 底部按钮变成"[AD] -30分钟" -> 跳过(点它=看广告, WATCH_ADS=False)
-    cool = [card(109 - 27, 826, '竞技场2'), card(109 - 26, 857, '-30分钟')]
-    r = lp._ready_chests(with_boxes('lobby_clean', cool))
-    check(r == [], '倒计时槽位必须跳过, 实际 %s' % (r,))
-    # d2) 同一形态但角标被 OCR 读成乱码(真机 23:49 读成 00时5分13脖) -> 判据在按钮行, 不误报
-    r = lp._ready_chests(with_boxes('lobby_clean', cool + [badge(0, '00时5分13脖')]))
-    check(r == [], '角标乱码时仍须靠按钮行判冷却, 实际 %s' % (r,))
-
-    # d3) 关键回归(真机 23:55): 倒计时归零后按钮写[开启], 但 OCR 经常读成"开咖"
-    #     -> 排除式判据照样认它是免费按钮(正面匹配"解锁|开启"会漏掉已经能领的宝箱)
-    r = lp._ready_chests(with_boxes('lobby_clean',
-                                    [card(114, 826, '竞技场2'), card(110, 858, '开咖')]))
-    check(r == [SLOTS[0]], 'OCR 把[开启]读成[开咖]时必须仍能领, 实际 %s' % (r,))
-    # d4) 按钮行只写"30分钟"(真机丢了负号) -> 必须跳过, 点它是看广告
-    r = lp._ready_chests(with_boxes('lobby_clean',
-                                    [card(114, 826, '竞技场2'), card(123, 860, '30分钟')]))
-    check(r == [], '按钮写 30分钟(广告加速)必须跳过, 实际 %s' % (r,))
-    check(r == [], '角标乱码时仍须靠按钮行判冷却, 实际 %s' % (r,))
-
-    # e) 没有任何 OCR 框(只靠指纹命中) -> 保守不点
-    r = lp._ready_chests(with_boxes('lobby_clean', []))
-    check(r == [], '无 OCR 数据时应返回空, 实际 %s' % (r,))
-
-    # f) 4 格全[点击解锁](语料 lobby_clean 的真实形态, 含所需时长角标) -> 全返回, 保持左到右
-    allc = ([card(sx - 29, 818, '竞技场1') for sx, _ in SLOTS]
-            + [card(sx - 26, 854, '点击解锁') for sx, _ in SLOTS]
-            + [badge(i, t) for i, t in enumerate(('5分', '10分', '5分', '05分'))]
-            + [BANNER])
-    r = lp._ready_chests(with_boxes('lobby_clean', allc))
-    check(r == list(SLOTS), '4 格全[点击解锁]应全返回, 实际 %s' % (r,))
-
-    # g) 真机 23:34 那张 lobby_clean 原图 OCR 形态: 4 个免费宝箱不能漏
-    real = [TBox('5分', 55, 729, 80, 24), TBox('5分', 277, 729, 80, 24),
-            TBox('05分', 388, 729, 80, 24), TBox('10分', 162, 730, 80, 24),
-            TBox('竞技场1', 146, 804, 80, 24), TBox('竞技场1', 262, 804, 80, 24),
-            TBox('竞技场1', 376, 807, 80, 24), TBox('竞技场1', 486, 805, 80, 24),
-            TBox('点击解锁', 43, 841, 80, 24), TBox('点击解锁', 155, 843, 80, 24),
-            TBox('点击解锁', 265, 841, 80, 24), TBox('点击解锁', 376, 841, 80, 24),
-            TBox('竞技场4解锁', 295, 620, 100, 24)]
-    r = lp._ready_chests(with_boxes('lobby_clean', real))
-    check(r == list(SLOTS), 'lobby_clean 原图 4 个免费宝箱应全判可点, 实际 %s' % (r,))
+    n_chk = 0
+    for nm in pp.LABELS['lobby']:
+        base = os.path.basename(nm).rsplit('.', 1)[0]
+        path = pp.img_path(nm)
+        if not path or os.path.splitext(os.path.basename(path))[0] != base:
+            continue                      # 只认 shots/<stem>.png 的真图帧
+        want = EXPECT.get(base)
+        if want is None:
+            print('    ?? %-24s 码表未登记, 请核对后补进 EXPECT' % base)
+            continue
+        img = Image.open(path).convert('RGB')
+        n_chk += 1
+        got = lp.chest_states(img)
+        check(got == want, '%s 槽位点色码 %s != 真值 %s' % (base, got, want))
+        # 可点槽位必须恰好是码里 o/u 那几格: 少了=漏领(23:55 真机就是这样永远不开箱),
+        # 多了=把冷却中的 [[AD]] 格点成了看广告
+        ready = lp._ready_chests(img)
+        exp = [SLOTS[i] for i, ch in enumerate(want) if ch in 'ou']
+        check(ready == exp, '%s 可点槽位 %s != %s' % (base, ready, exp))
+        # [玩家对战]按钮: 33 帧实测外接框中心恒为 (180,675)(旧版靠 OCR 读这四个字, 一帧都没读到)
+        pos = color_button(img, PVP_BOX, PVP_COLOR, PVP_MIN_PX)
+        check(pos is not None and abs(pos[0] - 180) <= 8 and abs(pos[1] - 675) <= 8,
+              '%s 玩家对战按钮点色没命中/跑偏: %s' % (base, pos))
+    check(n_chk >= len(EXPECT) - 5,
+          'lobby 帧只核了 %d/%d 张, 语料或码表脱节了' % (n_chk, len(EXPECT)))
+    print('    %d 帧: 槽位状态 + 可点集合 + 玩家对战中心 全部点色命中' % n_chk)
 
     print('[10] 软命中门限: 差<=1 点且甩开第二名才放行, 差 2 点交回 OCR')
     # 门限本身用假分数直接钉死(不必造图, 也不会随语料漂移)

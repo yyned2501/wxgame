@@ -14,8 +14,8 @@ test_print_route.py[10] / test_zero_ocr.py / test_cpu_offline.py 场景7。
 import logging
 import re
 
-from colorprint import (DEFAULT_DEGREE, DEFAULT_POS_TOL, is_multi_color, print_score,
-                        to_arr)
+from colorprint import (DEFAULT_DEGREE, DEFAULT_POS_TOL, color_bbox, color_count,
+                        is_multi_color, print_score, to_arr)
 
 
 class Page:
@@ -269,6 +269,25 @@ def find_close_badge(img, cell=12):
     if not cands:
         return None
     return max(cands)
+
+# ---- 动作层点色工具(2026-09-03 定案: 点哪里也优先看颜色) ----------------
+# 铁律: 页面身份由指纹确认之后, 动作层就不要再依赖 OCR 文字。
+# 用法: 在标定截图上量出按钮的绝对像素框(窗口已钉死成 REF_SIZE), 数框内目标色像素。
+# degree 用 90(每通道 ±13)而不是指纹的 85: 按钮是高饱和纯色, 收紧容差才能把
+# "有按钮"和"按钮上面的白字/旁边同款色装饰"分清(实测阈值见各页常量注释)。
+BTN_DEGREE = 90
+
+
+def color_pixels(img, box, color, degree=BTN_DEGREE):
+    """box 内某色像素个数(0 = 该色块不在这里)"""
+    return color_count(img, box, color, degree)
+
+
+def color_button(img, box, color, min_px=1, degree=BTN_DEGREE):
+    """box 内找一块足够大的目标色色块 -> (x, y) 点击点; 没找到返回 None"""
+    r = color_bbox(img, box, color, degree, min_px)
+    return None if r is None else (r[0], r[1])
+
 
 # ---- 侧页"返回箭头"判据(真机 2026-09-03 00:22 定案) ----
 # 坑: 任务/商店/英雄这类侧页左下角有个青色返回箭头, 页面本身没进指纹表 -> 判成 unknown,
