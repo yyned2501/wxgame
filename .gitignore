@@ -1,0 +1,45 @@
+# ==================================================================
+# 这个仓库只放: 项目实际代码 + 依赖清单 + 说明文档
+# 不放: 逆向资料 / 抓包数据 / 截图语料(shots/) / 日志 / 打包产物
+# 想加新游戏: 照 zcds/ 的样子建一个 ASCII 短名目录, 代码部分正常入库
+# ==================================================================
+
+# ---- 逆向资料(体积大 + 版权物 + 含会话凭据), 一律不入库 ----
+zcds/capture/
+zcds/dec/
+zcds/game_src/
+zcds/unity_data/
+zcds/tools/il2cppdumper/
+zcds/tools/wxapkg/
+zcds/tools/*.zip
+zcds/AUTOMATION_REPORT.md
+
+# ---- 一次性脚本/中间产物归档(187 项 31.2MB) ----
+zcds/scratch/
+
+# ---- 标定语料截图(70 张 23.35MB): 只留在本地, 不入库 ----
+zcds/shots/
+
+# ---- 运行产物 ----
+*.log
+__pycache__/
+*.py[cod]
+
+# ---- 真机抓帧暂存区(挑完图再手工挪进 shots/ 并登记 LABELS) ----
+zcds/shots_live/
+
+# ---- mxdzz 老项目的 PyInstaller 产物 ----
+mxdzz/build/
+mxdzz/dist/
+mxdzz/slide/
+*.exe
+*.pkg
+*.pyz
+*.toc
+
+# ---- 编辑器/系统 ----
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,8 @@
+# zcds 运行时依赖 (2026-08-31 实测通过的版本, python 3.12)
+# 装法: python -m pip install -r requirements.txt
+# 换 python 版本时装不下来就把 == 改成 >= 或直接删掉行尾版本号
+rapidocr_onnxruntime==1.4.4
+opencv-python==5.0.0.93
+numpy==2.3.5
+Pillow==12.3.0
+PyYAML==6.0.3

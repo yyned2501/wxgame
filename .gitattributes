@@ -1,0 +1,11 @@
+# 本项目刻意统一 CRLF(2026-08 手工归一化过, 混合行尾文件 = 0)
+# 所以禁止 git 做任何行尾转换, 否则 checkout 回来的文件会和标定/比对结果不一致
+* -text
+*.py    binary
+*.md    binary
+*.yaml  binary
+*.txt   binary
+*.ps1   binary
+*.png   binary
+*.npz   binary
+*.json  binary
