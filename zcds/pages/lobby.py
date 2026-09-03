@@ -60,6 +60,19 @@ CHEST_BADGE_COLOR = 0xFF3B3B
 CHEST_BADGE_DEGREE = 60
 CHEST_BADGE_MIN = 60
 CHEST_BADGE_OFF = (34, 730, 58, 756)   # 相对槽中心 x 的取样框, 见上面的实测范围
+# ---- 一格免费都没有时, 要不要试探点一下 p 格? (2026-09-03 晚, 用户口径: 看到[点击解锁]就点宝箱) ----
+# 用户截图(19:03:27 的宝箱行)按窗口坐标解码实测 = .UUU(角标 127/120/120, 第4格角标被裁在图外),
+#   那一帧本来就是当前判据会点的形态; 但 20:54 真机 lobby 实测三帧都是 appp(角标全 0) ->
+#   于是出现[底下明明写着点击解锁, 脚本却只去打对战] —— 用户要求改成这种时候也点宝箱。
+# 判据侧的已知事实(见上面角标注释 + scratch/scripts/chestinfo_gemscan.py):
+#   chest_info 面板 70 帧按[按钮带内紫宝石像素]二分 = 0(免费 23 帧) / 362(付费 47 帧), 没有骑墙值;
+#   面板里只有那一颗黄按钮(付费面板实拍 scratch/shots_probe/panel_paid.png 也没有第二个免费入口),
+#   而 chest_info.act() 必须[带内宝石像素 < GEM_MIN] 才肯点, 否则只点右上角 X 关闭并拉黑该格 300s。
+# 所以试探点 p 是零风险的: 免费 -> 真的白嫖一次解锁; 付费 -> 关面板走人, 一克拉宝石都不会花。
+#   它同时补齐目前缺的直接证据 —— 语料里从来没有一张从 p 格点进去的面板帧。
+# 边界: 只试探 p。a(=[[AD]加速], 点它=看激励视频, 下游从未采集) 和 .(空槽) 一律不点 —— 见 README 待办 14。
+CHEST_PROBE_P = True
+CHEST_PROBE_GAP = 25.0   # 秒; 试探点击节流(万一 p 格点了根本不出面板, 也不会刷帧点它)
 # [玩家对战]按钮: 也是同一套金色。外接框中心 = 落点, 所以取样框必须**只罩住按钮本体**:
 #   按钮本体实测恒定占 abs x93..268 / y651..700(n=6405~6539), 框左边界开到 x=88 就够了。
 # 坑(真机 2026-09-03 10:01 那批 lobby_live1002xx 共 10 帧): 框左边界原来开到 x=60, 于是**按钮左边那张
@@ -157,13 +170,16 @@ class LobbyPage(Page):
 
     # 轮换游标(真机教训: 旧版死点 ready[0], 那一格若点了没跳转就永远卡在同一坐标)
     _chest_i = 0
+    _chest_p_i = 0        # 试探 p 格的轮换游标(同理, 别死点同一格)
 
     def act(self, ctx):
         img = ctx.f.img      # act_needs_ocr=False => ctx.f 只有图没有文字框, 别用 ctx.f.find()
-        # 1) 开宝箱: 纯金[开启] 或 白字[点击解锁]**且带红角标** = 免费动作才点
-        #    (白字但没角标 = 面板只会是[开启 💎120], 点了就是白跑一趟, 见 CHEST_BADGE_OFF 注释)
-        #    再叠一层拉黑: 面板判出"这格要花钱"后 CHEST_PAID_BLOCK 秒内不再点它
-        #    (真机 03:54: 那一格颜色不变 -> 大厅反复点 -> 反复关面板, 6 秒一圈刷了 16 次)
+        # 1) 开宝箱(纯点色五档码 o/U/p/a/. 见 chest_states):
+        #    有免费格(o=[开启] / U=[点击解锁]且带红角标) -> 优先点它, 顺序不变
+        #    一格免费都没有 -> 按用户口径**试探点 p 格**(白字[点击解锁]), 由 chest_info 面板的
+        #      "按钮带内紫宝石像素"硬闸决定点还是关: 付费只关面板 + 拉黑该格 CHEST_PAID_BLOCK 秒,
+        #      全程不可能花宝石(见 CHEST_PROBE_P 上方证据)。a(看广告)/.(空槽) 仍然永不点。
+        #    再叠一层拉黑: 那一格颜色不变 -> 大厅反复点 -> 反复关面板, 真机 03:54 6 秒一圈刷了 16 次
         st = self.chest_states(img)
         ready = self._ready_chests(img, st)
         # CHEST_BLOCK_ALL = 面板判过付费但说不清是哪一格(用户手动开的面板) -> 整行先别碰
@@ -179,6 +195,19 @@ class LobbyPage(Page):
                 self._chest_i = i + 1
                 ctx.chest_target = chest_slot_key((sx, sy))
                 logging.info(f'[主页] 宝箱状态 {st} 可开 {len(openable)} 格, 点第 {i + 1} 格 ({sx},{sy})')
+                ctx.click(sx, sy)
+                return True
+        elif CHEST_PROBE_P and not ready and not ctx.is_blocked(CHEST_BLOCK_ALL):
+            # 无免费格 -> 试探点一格 p(用户口径), 免费/付费交给面板的宝石像素硬闸, 见 CHEST_PROBE_P
+            probes = [s for s, code in zip(CHEST_SLOTS, st)
+                      if code == 'p' and not ctx.is_blocked(chest_slot_key(s))]
+            if probes and not ctx.acted('chest_probe', gap=CHEST_PROBE_GAP):
+                i = self._chest_p_i % len(probes)
+                sx, sy = probes[i]
+                self._chest_p_i = i + 1
+                ctx.chest_target = chest_slot_key((sx, sy))
+                logging.info(f'[主页] 宝箱状态 {st} 无免费格 -> 试探点 p 格 ({sx},{sy})'
+                             f' (免费/付费由面板宝石像素判定)')
                 ctx.click(sx, sy)
                 return True
         # 2) 玩家对战: 认那块金色按钮的外接框中心(旧版要 OCR 读[玩家对战], 读不到就永远不点)
