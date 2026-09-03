@@ -18,7 +18,7 @@ MASK_POINTS = [(270, 200), (30, 300), (520, 300), (270, 860)]
 
 class VipPopupPage(Page):
     name = 'vip_popup'
-    next_pages = ('lobby', 'unknown')
+    next_pages = ('lobby', 'levelup', 'unknown')
     _mask_i = 0
     act_needs_ocr = False     # 关闭键靠颜色定位(find_close_badge), 文字键才惰性补 OCR
 
@@ -40,6 +40,18 @@ class VipPopupPage(Page):
             [216, 536, 0xECECEC], [272, 538, 0xFFFFFF], [274, 538, 0xEBEBEB],
             [270, 538, 0xBEBEBE], [272, 540, 0xF8F8F8], [272, 536, 0xFFFFFF],
         ),
+    )
+
+    # 锚点相对点色(2026-09-03): 这类奖励弹窗面板**位置随内容浮动**, 同一个月卡弹窗
+    # 在 00:56 那批 badge 在 (455,461)、10:53 那批在 (459,545) —— 绝对坐标指纹必然对不上,
+    # 于是每帧都要白跑一次全图 OCR(675ms)才认出弹窗。锚点 = find_close_badge 的红底白叉
+    # 关闭徽章中心, 它左边那一排金币图标偏移固定(实测 11 帧完全一致), 5 点全中即认定本页。
+    # 语料: 弹窗帧 11/11 全中; 248 张标注语料 + 576 张真机帧异页误中 0
+    #   (ask_battle 这类弹窗徽章在 (464,307), 同偏移处是 0x592725/0xC3351C 的红底, 差得远)。
+    # 5 点 < SOFT_MIN_PTS(8) -> 锚点指纹只允许全中, 不存在软命中误判。
+    anchor_prints = (
+        ((-30, 0, 0xFDD825), (-60, 0, 0xFED926), (-90, 0, 0xFEDA24),
+         (-60, -20, 0xEFAA1F), (-90, -20, 0xEEAB22)),
     )
 
     def detect(self, f):

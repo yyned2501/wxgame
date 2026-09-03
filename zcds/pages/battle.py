@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """战斗页: 自动点格子. 用颜色扫描做识别(无 OCR, ~10ms/次)
 
-策略(用户确认):
+策略(用户 2026-09-03 指定):
   1) 只点白色价格标签(钱够可点), 红色=钱不够跳过
-  2) 白色团+3条直线 = 矿(产钱) 优先
-  3) 再点 50 兵营, 再 25 问号, 最后其他可点的
+  2) 先开 50 的矿, 再开 50 的兵营, 再考虑 25 的, 都没有就开 100 的
+  3) 第一名点过就换第二名(不是整轮不动手); 拉黑只保持 CELL_RETRY 秒
 """
 import logging, time
 
@@ -15,21 +15,27 @@ except ImportError:
 from .base import Page
 
 TOWER = (276, 800)
-CELL_COOLDOWN = 5
+# 两次点格子的最小间隔. battle 页 poll=3.0s(config.py), 旧的 5s 等于每两轮才出手一次
+CELL_COOLDOWN = 2.5
+# 点过的格子拉黑多久. 到期后允许回头再点(同一格升级/开新的);
+# 镜头平移后同一格会落在新坐标 -> 自然就是新 key, 不受旧条目影响
+CELL_RETRY = 25.0
+
+
+# 用户指定顺序: 50矿 > 50兵营 > 50问号 > 25 > 100 > 250 > 认不出价钱的
+# (旧版是 "矿 > 50 > 2d > 25", 而 2d 这个桶几乎装下了所有格子 -> 真机上等于只按 y 点, 25 先被点光)
+PRICE_TIER = {25: 3, 100: 4, 250: 5}
 
 
 def rank_cell(c):
-    """点击优先级: 矿 > 50 > 2d(二位数分不清) > 25 > 3d"""
-    if c['mine']:
-        mine_zone = 1 if (c['x'] + c['w'] // 2 >= TOWER[0] and c['y'] <= TOWER[1]) else 0
-        return (0, -mine_zone, -c['y'])
-    if c['cls'] == '50':
-        return (1, 0, -c['y'])
-    if c['cls'] == '2d':
-        return (2, 0, -c['y'])
-    if c['cls'] == '25':
-        return (3, 0, -c['y'])
-    return (4, 0, -c['y'])
+    """点击优先级(越小越先点). cls 是 int: 25/50/100/250/3(认不出)"""
+    if c['cls'] == 50:
+        tier = {'ore': 0, 'barracks': 1}.get(c['icon'], 2)
+    else:
+        tier = PRICE_TIER.get(c['cls'], 6)
+    # 同档内: 靠塔那一侧(右上, 兵线来的方向)先开, 再按行从下往上
+    near_tower = 1 if (c['x'] + c['w'] // 2 >= TOWER[0] and c['y'] <= TOWER[1]) else 0
+    return (tier, -near_tower, -c['y'])
 
 
 class BattlePage(Page):
@@ -68,11 +74,13 @@ class BattlePage(Page):
         # 大厅横幅/弹窗(购买礼包等)会有一排数字, 绝不能误判成战斗
         if f.has('购买礼包', '月卡', '特权', '超值', '七日'):
             return 0.0
-        # 颜色扫描兜底: 需 >=2 行标签 且 识别到矿图标, 才算棋盘
+        # 颜色扫描兜底: 需 >=2 行标签 且 至少 2 个格子带图标, 才算棋盘
+        # (旧版要求"看到矿", 但全语料 1488 个白色标签里矿只占 14%, 大多数战斗帧根本看不到矿 ->
+        #  兜底形同虚设; 大厅横幅/礼包弹窗的数字上方没有图标, 换成数图标仍然挡得住)
         try:
             cells = scan_battle_cells(f.img)
             rows = {c['y'] // 16 for c in cells}
-            if len(rows) >= 2 and any(c['mine'] for c in cells):
+            if len(rows) >= 2 and sum(1 for c in cells if c['icon']) >= 2:
                 return 0.8
         except Exception:
             pass
@@ -81,22 +89,41 @@ class BattlePage(Page):
     def act(self, ctx):
         cells = scan_battle_cells(ctx.f.img)
         # 防护: 点色指纹已全中 = 确认在战斗页, 直接放行(不为此跑 OCR, 省 ~315ms);
-        #       只有靠颜色扫描兜底定页时, 才要求至少看到矿, 防止点到大厅横幅数字
+        #       只有靠颜色扫描兜底定页时, 才要求看到 >=2 个格子图标, 防止点到大厅横幅数字
         if (not ctx.print_confirmed and not ctx.f.has('时间', '时间剩余')
-                and not any(c['mine'] for c in cells)):
+                and sum(1 for c in cells if c['icon']) < 2):
             return False
-        clickable = [c for c in cells if c['white']]
+        # cls=3 = 认不出价钱的三位数块(实测是左下角"镜头复位"按钮的中文), 绝不点
+        clickable = [c for c in cells if c['white'] and c['cls'] != 3]
         if not clickable:
             return False
-        if time.time() - ctx.last_cell < CELL_COOLDOWN:
+        now = time.time()
+        if now - ctx.last_cell < CELL_COOLDOWN:
             return False
+        # clicked_cells 是 {格子key: 点击时刻}: 先清掉过期条目, 再按档位找能点的格子
+        expired = [k for k, t in ctx.clicked_cells.items() if now - t > CELL_RETRY]
+        for k in expired:
+            del ctx.clicked_cells[k]
         clickable.sort(key=rank_cell)
-        c = clickable[0]
-        cx, cy = c['x'] + c['w'] // 2, c['y'] + c['h'] // 2
-        if (cx // 16, cy // 16) in ctx.clicked_cells:
-            return False
-        ctx.clicked_cells.add((cx // 16, cy // 16))
-        ctx.last_cell = time.time()
-        logging.info(f'[战斗] 点格子 ({cx},{cy}) mine={c["mine"]} cls={c["cls"]}')
-        ctx.click(cx, cy)
-        return True
+        # 必须逐个往后找. 旧版只看第一名, 第一名点过一次就整轮 return False ->
+        # 真机 12:11:07~12:12:42 连续 95s 一次手都没出, 而当时棋盘上还有 14 个白色格子
+        skipped = 0
+        for c in clickable:
+            cx, cy = c['x'] + c['w'] // 2, c['y'] + c['h'] // 2
+            key = (cx // 16, cy // 16)
+            if key in ctx.clicked_cells:
+                skipped += 1
+                continue
+            ctx.clicked_cells[key] = now
+            ctx.last_cell = now
+            extra = ''
+            if skipped:
+                extra += ' 跳过已点%d格' % skipped
+            if expired:
+                extra += ' 解禁%d格' % len(expired)
+            logging.info(f'[战斗] 点格子 ({cx},{cy}) {c["icon"]} cls={c["cls"]} '
+                         f'clip={c["clip"]}{extra}')
+            ctx.click(cx, cy)
+            return True
+        logging.debug('[战斗] 全部白色格子都在冷却中')
+        return False

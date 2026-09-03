@@ -23,6 +23,9 @@ from pages import ALL_PAGES
 from pages.base import detect_ocr, is_soft, route, route_prints, soft_hit
 from vision import ScreenFeature
 
+# 无指纹页只允许两种存在方式: 只靠 OCR 认页的弹窗类(写在检查里),
+# 或者像 tab_other 这样由"上下文 + 一条点色判据"推出身份、压根不需要 OCR
+CONTEXT_PAGES = ('tab_other',)
 FAILS = []
 
 
@@ -107,8 +110,13 @@ def main():
             check(all(len(fp) >= 15 for fp in fps),
                   '%s 有指纹组不足 15 个判色点(3 个十字单元)' % pg.name)
         else:
-            check(pg.name in ('ad_popup', 'claim_popup', 'diamond_popup', 'unknown'),
-                  '%s 没有指纹且不在允许只走 OCR 的清单里' % pg.name)
+            # 无指纹页只允许两种存在方式:
+            #   a 只靠 OCR 认页(弹窗类, 文案就是身份)
+            #   b 靠"上下文 + 一条点色判据"推出身份, 根本不需要 OCR —— tab_other 就是这样:
+            #     底部导航栏在(16 个静态像素)而大厅指纹没中 => 我在别的页签上
+            check(pg.name in ('ad_popup', 'claim_popup', 'diamond_popup', 'unknown')
+                  or pg.name in CONTEXT_PAGES,
+                  '%s 没有指纹, 既不在只走 OCR 的清单里, 也不在上下文页清单里' % pg.name)
     check(ALL_PAGES[-1].name == 'unknown', 'ALL_PAGES 最后一项必须是 unknown(兜底)')
     print('    %d/%d 页已标点色指纹; 只走 OCR: %s'
           % (n_fp, len(ALL_PAGES), ', '.join(p.name for p in ALL_PAGES if not p.fingerprints())))
@@ -220,6 +228,22 @@ def main():
         'guide_live2': 'ouuu', 'lobby_cooling_2335': 'a...', 'lobby_live010807': 'a...',
         'lobby_mixed_0019': 'au..', 'lobby_live004222': '.u..', 'lobby_live010733': 'uo..',
         'lobby_live035055': 'ou..',                      # 槽1[开启] + 槽2[点击解锁](15分) 同时存在
+        # 下面 15 帧是同一段真机 burst(按钮行逐帧有动画), 人工核对: 解锁/解锁/开启/解锁
+        'lobby_live100100': 'uuou',
+        'lobby_live100200': 'uuou',
+        'lobby_live100201': 'uuou',
+        'lobby_live100202': 'uuou',
+        'lobby_live100203': 'uuou',
+        'lobby_live100204': 'uuou',
+        'lobby_live100205': 'uuou',
+        'lobby_live100206': 'uuou',
+        'lobby_live100207': 'uuou',
+        'lobby_live100208': 'uuou',
+        'lobby_live100209': 'uuou',
+        'lobby_live100210': 'uuou',
+        'lobby_live100211': 'uuou',
+        'lobby_live100212': 'uuou',
+        'lobby_live100213': 'uuou',
     }
     lp = LobbyPage()
     n_chk = 0
@@ -241,7 +265,7 @@ def main():
         ready = lp._ready_chests(img)
         exp = [SLOTS[i] for i, ch in enumerate(want) if ch in 'ou']
         check(ready == exp, '%s 可点槽位 %s != %s' % (base, ready, exp))
-        # [玩家对战]按钮: 33 帧实测外接框中心恒为 (180,675)(旧版靠 OCR 读这四个字, 一帧都没读到)
+        # [玩家对战]按钮: 外接框中心恒为 (180,675)(取样框 2026-09-03 收紧过, 见 pages/lobby.py PVP_BOX)
         pos = color_button(img, PVP_BOX, PVP_COLOR, PVP_MIN_PX)
         check(pos is not None and abs(pos[0] - 180) <= 8 and abs(pos[1] - 675) <= 8,
               '%s 玩家对战按钮点色没命中/跑偏: %s' % (base, pos))

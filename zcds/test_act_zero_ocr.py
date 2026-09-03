@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""离线「动作层零 OCR」回归: result / chest_open / lobby / chest_info 四页 act() 全程不碰文字识别
+"""离线「动作层零 OCR」回归: result / chest_open / lobby / chest_info / levelup / hero_level 六页 act() 全程不碰文字识别
 
 用户定案(2026-09-03): OCR 准确率太低而且速度太慢 —— 定页面用点色指纹, 点哪里也必须用点色。
-本脚本把 ctx 换成假桩, need_text() 与 f.find()/f.has() 一被调用就抛, 于是同时钉死四件事:
-  1) 这四页的 act_needs_ocr 必须是 False(主循环据此决定要不要为本页跑一次 OCR, 真机 369~675ms)
+本脚本把 ctx 换成假桩, need_text() 与 f.find()/f.has() 一被调用就抛, 于是同时钉死几件事:
+  1) 这几页的 act_needs_ocr 必须是 False(主循环据此决定要不要为本页跑一次 OCR, 真机 369~675ms)
   2) act() 里不许偷偷去读字 —— 读了就当场抛, 记一条失败
   3) 每帧点到的坐标必须等于人工核对过的真值(点色取按钮外接框中心, 两种版式中心差 80px, 写死必错)
   4) 该不动作的帧(广告盖脸、两处白块都未出)一次都不许点
@@ -23,6 +23,8 @@ import pick_print as pp
 from pages import ALL_PAGES
 from pages.chest_info import ChestInfoPage
 from pages.chest_open import ChestOpenPage
+from pages.hero_level import HeroLevelPage
+from pages.levelup import LevelUpPage
 from pages.lobby import CHEST_SLOTS, LobbyPage
 from pages.result import ResultPage
 from vision import ScreenFeature
@@ -40,7 +42,7 @@ def check(cond, msg):
 
 
 class ZeroOcr(Exception):
-    """动作层想去读文字 —— 这四页必须纯点色, 出现即失败"""
+    """动作层想去读文字 —— 纯点色页出现即失败"""
 
 
 class NoText(ScreenFeature):
@@ -72,6 +74,7 @@ class Ctx:
         self._done = set(blocked)
         self.chest_target = None
         self._blacklist = set()
+        self.ad_watch = []               # start_ad_watch() 的调用原因(= 看广告窗口被 arm 过)
 
     # ---- 拉黑接口(与 App.block/is_blocked 同语义, 见 pages/base.py chest_slot_key) ----
     def block(self, key, sec, why=''):
@@ -90,6 +93,9 @@ class Ctx:
             return True
         self._done.add(key)
         return False
+
+    def start_ad_watch(self, why=''):
+        self.ad_watch.append(why)
 
     def need_text(self):
         raise ZeroOcr('ctx.need_text()')
@@ -122,14 +128,15 @@ def blank(img, box):
 
 
 def main():
-    print('[1] 声明自检: 这四页必须是纯点色页, 主循环才不会为它跑 OCR')
-    for cls in (ResultPage, ChestOpenPage, LobbyPage, ChestInfoPage):
+    print('[1] 声明自检: 纯点色页必须声明 act_needs_ocr=False, 主循环才不会为它跑 OCR')
+    for cls in (ResultPage, ChestOpenPage, LobbyPage, ChestInfoPage, LevelUpPage, HeroLevelPage):
         p = cls()
         check(p.act_needs_ocr is False, '%s.act_needs_ocr 应为 False' % p.name)
     left = ' '.join(p.name for p in ALL_PAGES if p.act_needs_ocr)
     print('    动作层仍需读文字的页: %s' % (left or '(无)'))
 
-    print('[2] 结算页: 亮紫按钮外接框中心 —— 有礼包横幅 830 / 无横幅 912 / 真机 910')
+    print('[2] 结算页: 亮紫按钮外接框中心 —— 有礼包横幅 830 / 无横幅 912 / 真机 910'
+          ' (带黄色[领取]的先去看广告)')
     # 逐帧真值来源 scratch/scripts/act_truth.py (2026-09-03 dump, 明细 scratch/o_act.txt)
     # watch_124707: 激励视频盖在结算页上, 扫不到那块亮紫 -> 本帧必须不动作
     #   (旧版靠 OCR 找"点击继续", 读到遮罩上的广告文案就瞎点一次, 真机就是这样把广告点开的)
@@ -149,6 +156,16 @@ def main():
         'result_live031108': (275, 910), 'result_live035436': (275, 910),
         'result_live040817': (275, 910),
     }
+    # 带黄色[领取]药丸的帧(ad_claim_pos 实测命中, 明细 scratch/scripts/claim_frames_0903.py):
+    # act() 必须先点 (412,782) 去看广告, 而且这一轮**不算一场**(battles 不动), 同时把
+    # "看广告窗口" arm 起来 —— 用户 2026-09-03 12:47 定案"可以看广告的地方就自动看完"。
+    CLAIMED = {
+        'now', 'help_live', 'watch_124652', 'watch_124654', 'watch_124656', 'watch_124658',
+        'watch_124700', 'watch_124705', 'result_live005639', 'result_live010726',
+        'result_live010729', 'result_live030901', 'result_live030920', 'result_live031108',
+        'result_live031408', 'result_live035436', 'result_live040817',
+    }
+    CLAIM = (412, 782)
     rp = ResultPage()
     frames = label_frames('result')
     check(set(frames) == set(EXPECT),
@@ -158,15 +175,24 @@ def main():
         img = frames.get(nm)
         if img is None:
             continue
+        want = CLAIM if nm in CLAIMED else want
         ctx = Ctx(img)
         hit = run(rp, img, ctx)
-        check(ctx.clicks == ([] if want is None else [want]),
+        got = ctx.clicks[0] if len(ctx.clicks) == 1 else None
+        near = (want is not None and got is not None
+                and abs(got[0] - want[0]) <= 3 and abs(got[1] - want[1]) <= 3)
+        check(near if want else not ctx.clicks,
               'result/%s 点击 %s != %s' % (nm, ctx.clicks, want))
         check(hit == (want is not None),
               'result/%s act 返回 %s 与是否点击不一致' % (nm, hit))
-        check(ctx.battles == (0 if want is None else 1),
-              'result/%s 场次计数 %d 不应对(只有真点了继续才算一场)' % (nm, ctx.battles))
-    print('    %d 帧零 OCR, 其中 watch_124707(广告盖脸)正确地一次没点' % len(EXPECT))
+        check(ctx.battles == (1 if (want is not None and nm not in CLAIMED) else 0),
+              'result/%s 场次计数 %d 不应对(去看广告那一轮不算一场, 真点了[继续]才算)'
+              % (nm, ctx.battles))
+        check((ctx.ad_watch == ['结算礼包']) == (nm in CLAIMED),
+              'result/%s 看广告窗口 %s 与黄色[领取]在不在不一致' % (nm, ctx.ad_watch))
+    print('    %d 帧零 OCR: %d 帧先去看广告, %d 帧直接点[继续], '
+          'watch_124707(广告盖脸)正确地一次没点' % (len(EXPECT), len(CLAIMED),
+                                                    len(EXPECT) - len(CLAIMED) - 1))
 
     print('[3] 开箱动画: 底部白色按钮块 -> 领取/关闭同一点; 左上[跳过]只在按钮未出时点')
     EXPECT = {
@@ -264,21 +290,28 @@ def main():
         run(lp2, img, ctx)                 # 第 5 次: 游标绕回槽1, 仍然要有动作
         check(ctx.clicks == [CHEST_SLOTS[0]], '轮换绕回后应回到槽1, 实际 %s' % (ctx.clicks,))
 
-    print('[5] WATCH_ADS 开关: 只有真要看广告时, 结算页才允许补一次 OCR')
+    print('[5] WATCH_ADS 开关: 默认必须开着, 且两个方向都零 OCR(点色认[领取], 不再读字)')
     import pages.result as res
-    img = label_frames('result').get('flow3_end1')
+    img = label_frames('result').get('result_live005639')   # 带黄色[领取]横幅的帧
     if img is not None:
         old = res.WATCH_ADS
         try:
+            res.WATCH_ADS = False
+            ctx = Ctx(img)
+            run(rp, img, ctx)
+            check(ctx.clicks == [(275, 910)] and not ctx.ad_watch,
+                  'WATCH_ADS=False 应直接点[继续]且不开广告窗口, 实际 %s 窗口=%s'
+                  % (ctx.clicks, ctx.ad_watch))
             res.WATCH_ADS = True
-            try:
-                rp.act(Ctx(img))
-                check(False, 'WATCH_ADS=True 时 result.act 应去调 need_text() 找[领取], 却没调')
-            except ZeroOcr:
-                print('    WATCH_ADS=True -> 确实走惰性 OCR(默认 False 时全程零 OCR)')
+            ctx = Ctx(img)
+            run(rp, img, ctx)
+            check(len(ctx.clicks) == 1 and abs(ctx.clicks[0][0] - 412) <= 3
+                  and abs(ctx.clicks[0][1] - 782) <= 3,
+                  'WATCH_ADS=True 应先点黄色[领取](412,782), 实际 %s' % (ctx.clicks,))
+            check(ctx.ad_watch == ['结算礼包'], '点了[领取]却没 arm 看广告窗口: %s' % (ctx.ad_watch,))
         finally:
             res.WATCH_ADS = old
-    check(res.WATCH_ADS is False, 'WATCH_ADS 默认必须关(不点任何广告)')
+    check(res.WATCH_ADS is True, 'WATCH_ADS 默认必须开(用户 2026-09-03 12:47 定案: 能看就自动看完)')
 
     print('[6] 宝箱面板: 黄按钮用点色找 / 付费用带内宝石像素判 —— 价格护栏也脱开文字了')
     # 旧版护栏全靠 OCR 读"钻石/宝石/￥", 又慢又不准: 真机 00:57 把"紫宝石图标+30"读成裸数字
@@ -305,13 +338,51 @@ def main():
           'chest_info 真值帧太少(共 %d, 付费 %d) -> 语料被清了?' % (n_ci, n_paid))
     print('    %d 帧(含 %d 张付费)全程没读一个字' % (n_ci, n_paid))
 
+    print(u'[7] 升级领奖页: 黄色"领取"按钮 —— 必须和宝箱面板那块同色按钮划清界限')
+    lu_frames = label_frames('levelup')
+    check(len(lu_frames) >= 3, u'levelup 语料帧太少(%d) -> 语料被清了?' % len(lu_frames))
+    for nm, img in sorted(lu_frames.items()):
+        ctx = Ctx(img)
+        got = run(LevelUpPage(), img, ctx)
+        check(got and ctx.clicks == [(275, 776)],
+              u'levelup/%s 点击 %s != [(275, 776)]' % (nm, ctx.clicks))
+    # 反向互斥: 宝箱面板那块是**同一颜色**(#FDCA33)的黄按钮, 付费面板点一次就花 30 紫宝石,
+    # 所以本页的动作层必须永远不在 chest_info 帧上出手(中心 y 带 + 像素数上限两条尺子)。
+    ci_frames = label_frames('chest_info')
+    for nm, img in sorted(ci_frames.items()):
+        ctx = Ctx(img)
+        run(LevelUpPage(), img, ctx)
+        check(not ctx.clicks,
+              u'levelup.act 在 chest_info/%s 上出手了 %s -> 两页黄按钮互斥判据失效' % (nm, ctx.clicks))
+    print(u'    %d 帧领取 + %d 帧面板反向互斥, 全程没读一个字' % (len(lu_frames), len(ci_frames)))
+
+    print(u'[8] 英雄等级面板: 右上角红底关闭徽章 —— 必须和宝箱面板那颗同款徽章划清界限')
+    hl_frames = label_frames('hero_level')
+    check(len(hl_frames) >= 3, u'hero_level 语料帧太少(%d) -> 语料被清了?' % len(hl_frames))
+    for nm, img in sorted(hl_frames.items()):
+        ctx = Ctx(img)
+        got = run(HeroLevelPage(), img, ctx)
+        check(got and ctx.clicks == [(469, 172)],
+              u'hero_level/%s 点击 %s != [(469, 172)]' % (nm, ctx.clicks))
+    # 反向互斥: chest_info 的关闭徽章是**同色同形状**, 中心只比本页低 13px(159 vs 172);
+    # vip_popup 月卡弹窗的徽章在 y454, vip_month 的在 y300 —— 全都出不了本页那条 y 带。
+    n_guard = 0
+    for lbl in ('chest_info', 'vip_popup', 'vip_month'):
+        for nm, img in sorted(label_frames(lbl).items()):
+            ctx = Ctx(img)
+            run(HeroLevelPage(), img, ctx)
+            check(not ctx.clicks,
+                  u'hero_level.act 在 %s/%s 上出手了 %s -> 徽章 y 带互斥判据失效' % (lbl, nm, ctx.clicks))
+            n_guard += 1
+    print(u'    %d 帧关面板 + %d 帧反向互斥, 全程没读一个字' % (len(hl_frames), n_guard))
+
     print('')
     if FAILS:
         print('不通过 %d 项:' % len(FAILS))
         for m in FAILS:
             print('  - ' + m)
         return 1
-    print('全部通过 (result/chest_open/lobby/chest_info 动作层零 OCR)')
+    print(u'全部通过 (result/chest_open/lobby/chest_info/levelup/hero_level 动作层零 OCR)')
     return 0
 
 

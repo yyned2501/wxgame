@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""结算页: 领奖(失败/胜利礼包) -> 点击继续"""
+"""结算页: 看广告领奖(失败/胜利礼包, 纯点色) -> 点击继续"""
 import logging
 
 from config import WATCH_ADS
 
-from .base import Page, color_button
+from .base import Page, ad_claim_pos, color_button
 
 class ResultPage(Page):
     name = 'result'
-    next_pages = ('lobby', 'claim_popup', 'ad_popup', 'vip_popup', 'matching', 'unknown')
+    next_pages = ('lobby', 'claim_popup', 'ad_popup', 'vip_popup', 'matching',
+                  'levelup', 'hero_level', 'unknown')
     # 点色指纹: 由 tools/pick_print.py pick --label result 自动标定(勿手改)
     # 1 种形态 x 5 个十字单元(每单元 5 点, 共 25 判色点/形态), 任一形态全中即判为 result; 语料 22/22 全中 / 异页误中 0 / margin 0.12(异页最高只中 3/25 点) / 各形态覆盖 [22] 帧
     points = [
@@ -33,6 +34,9 @@ class ResultPage(Page):
     CONTINUE_COLOR = 0xCC56FF
     CONTINUE_MIN_PX = 800
     act_needs_ocr = False   # 纯点色页: 主循环不为本页跑 OCR
+    # [领取]点完到下一次点它的间隔. 领完广告退回结算页时横幅往往还在(那是"可用 8/8"的每日额度),
+    # 不设节流就会在同一次结算里反复开广告。120s > 一场战斗 + 一条广告, 等于"每场最多领一次"。
+    CLAIM_GAP = 120.0
 
     def detect(self, f):
         # x0.5 下"继续/维续"易读错, 多做几个容错
@@ -43,14 +47,16 @@ class ResultPage(Page):
         return 0.0
 
     def act(self, ctx):
-        # 1) 礼包领取: 真机 23:24 证实"领取"打开的是激励视频广告页(pages/ad_popup.py),
-        #    WATCH_ADS=False(默认)时连 OCR 都不启动 —— 短路在最前面, 保住本页零 OCR。
+        # 1) 礼包领取: 点色认黄色[领取]药丸(ad_claim_pos, 全语料 815 帧 38 中 / 0 误中),
+        #    然后交给主循环的"看广告窗口"把这条广告看完 —— 用户 2026-09-03 12:47 定案。
+        #    旧版这里是 ctx.need_text() + f.find('领取'): 一次全图 OCR, 而且"领取"两个字
+        #    在别的弹窗上也有(钻石礼包), 靠 '钻石' not in joined 打补丁。现在整条零 OCR。
         if WATCH_ADS:
-            f = ctx.need_text()          # 只在真要看广告时才惰性补一次文字识别
-            pts = f.find('领取') if f is not None else None
-            if pts and '钻石' not in f.joined and not ctx.acted('result_claim'):
-                logging.info(f'[结算] 点 领取(礼包) {pts[0]}')
-                ctx.click(*pts[0])
+            pos = ad_claim_pos(ctx.f.img)
+            if pos is not None and not ctx.acted('result_claim', self.CLAIM_GAP):
+                logging.info(f'[结算] 点色命中[领取](看广告) {pos} -> 去看广告, 看完自动关')
+                ctx.click(*pos)
+                ctx.start_ad_watch('结算礼包')
                 return True
         # 2) 继续: 亮紫按钮的外接框中心(旧版要 OCR 认"点击继续", 还常被读成"点击维续")
         pos = color_button(ctx.f.img, self.CONTINUE_BOX, self.CONTINUE_COLOR,

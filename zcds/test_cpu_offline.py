@@ -79,9 +79,12 @@ def check(cond, msg):
 OCR_STEPS = 0        # 全程 OCR 次数统计
 
 
-def run(tag):
-    """跑一轮并累计 OCR 次数"""
+def run(tag, fresh=False):
+    """跑一轮并累计 OCR 次数; fresh=True 先把零命中水位清 0(场景之间要互相隔离 ——
+    2b2 认出出口后会刻意停在 AFTER-1, 下一帧还零命中就继续出手, 不再白等)"""
     global OCR_STEPS
+    if fresh:
+        app._nohit_streak = 0
     page, acted, ocr_ran = app.step()
     OCR_STEPS += int(ocr_ran)
     return page, acted, ocr_ran
@@ -106,7 +109,7 @@ check(p3b.name == 'chest_info' and not o3b, '宝箱面板帧2: 依旧零 OCR')
 
 # ---------- 场景3: 战斗页整轮零 OCR(点色扫描) ----------
 app._act_gap = 0
-app.clicked_cells = set()
+app.clicked_cells = {}
 app.last_cell = 0
 QUEUE[:] = ['shots/battle_full.png'] * 3
 p4, a4, o4 = run('b1')
@@ -121,7 +124,7 @@ check(p6.name == 'battle' and not o6, '战斗帧3: 依旧零 OCR')
 QUEUE[:] = ['shots/flow2_m0.png'] * 8
 ocr_cnt = 0
 for _ in range(8):
-    app.clicked_cells = set()
+    app.clicked_cells = {}
     app.last_cell = 0
     p, a, o = run('loop')
     ocr_cnt += int(o)
@@ -134,46 +137,72 @@ p7, a7, o7 = run('result')
 print(f'[5] 结算页: page={p7.name} acted={a7} ocr={o7}')
 check(p7.name == 'result' and a7 and not o7, '结算页: 指纹定页 + 点色认[继续]按钮, 整轮零 OCR')
 
-# ---------- 场景6: 点色全表零命中 -> 先白等一帧, 连着第2帧才允许花一次全图 OCR ----------
+# ---------- 先造一帧"点色全表零命中 + 没有返回箭头 + 没有引导气泡"的中性帧 ----------
 # 2026-09-03 真机 03:54: 战斗页被爆炸动画盖住指纹 -> 那一帧零命中 -> 白烧 675ms 全图 OCR
 # 还判成 unknown; 下一帧就恢复全中了。动画帧不会连着两帧长得一样, 所以第 1 帧只等不动。
-QUEUE[:] = ['shots/other_quest_0022.png'] * 2
+import numpy as np
+_b = Image.open(os.path.join(D, 'shots/battle_full.png')).convert('RGB')
+_arr = cp.to_arr(_b).copy()
+_arr[:, :] = 200                            # 整帧糊成一片亮灰: 谁都不像, 也没字可读
+NEUTRAL = Image.fromarray(_arr)             # 底部导航栏一并糊掉 -> 连"兄弟页签"都推不出来
+
+# ---------- 场景6: 中性零命中帧(什么出口特征都没有) -> 白等一帧, 第2帧才允许花一次全图 OCR ----------
+QUEUE[:] = [NEUTRAL] * 2
 app.vision.reset()
-p8a, a8a, o8a = run('other_no_print_1')
-p8, a8, o8 = run('other_no_print_2')
-print(f'[6] 无指纹帧: 帧1 page={p8a} ocr={o8a} / 帧2 page={p8.name} acted={a8} ocr={o8}')
+p8a, a8a, o8a = run('neutral_1', fresh=True)
+p8, a8, o8 = run('neutral_2')
+print(f'[6] 中性零命中帧: 帧1 page={p8a} ocr={o8a} / 帧2 page={p8.name} acted={a8} ocr={o8}')
 check(p8a is None and not o8a,
       '零命中第1帧: 白等一轮(可能是动画帧), 不动作也不花 OCR')
 check(p8.name == 'unknown' and o8,
-      '连着第2帧仍零命中 -> 才是真没标指纹的页(侧页/改版), 走 OCR 兜底')
+      '连着第2帧仍零命中且无出口特征 -> 才是真没标指纹的页(改版), 走 OCR 兜底')
 
-# ---------- 场景6b: OCR 缓存复用 + reset() 作废(纯点色后 step() 走不到这条路, 直接问 Vision) ----------
+# ---------- 场景6a: 零命中但认出[侧页返回箭头] -> 交 unknown 退出, 一次 OCR 都不许花 ----------
+# 侧页(竞技场/任务)内容随等级变, 标指纹等于标在文字上(lobby 刚踩过), 所以刻意不标;
+# 但左下角那颗青色返回箭头本身就是点色可认的身份 + 出口。
+QUEUE[:] = ['shots/other_quest_0022.png'] * 2
+pa1, aa1, oa1 = run('arrow_1', fresh=True)
+pa2, aa2, oa2 = run('arrow_2')
+print(f'[6a] 带箭头侧页: 帧1 page={pa1} ocr={oa1} / 帧2 page={pa2.name} acted={aa2} ocr={oa2}')
+check(pa1 is None and not oa1, '带箭头帧第1帧: 仍然只白等, 不动作不花 OCR')
+check(pa2.name == 'unknown' and not oa2,
+      '带箭头帧第2帧: 点色认出返回箭头 -> 直接交 unknown, 一次 OCR 都不花')
+
+# ---------- 场景6b: 零命中但认出[新手引导模态] -> 同样零 OCR 交给 unknown ----------
+# 引导气泡把整页压暗, 所以那帧连大厅指纹都不命中; 认它靠的是"大白气泡"这个颜色特征。
+QUEUE[:] = ['shots/lobby_dim_live090000.png'] * 2
+pg1, ag1, og1 = run('guide_1', fresh=True)
+pg2, ag2, og2 = run('guide_2')
+print(f'[6b] 引导模态帧: 帧1 page={pg1} ocr={og1} / 帧2 page={pg2.name} acted={ag2} ocr={og2}')
+check(pg1 is None and not og1, '引导帧第1帧: 白等一轮, 不动作不花 OCR')
+check(pg2.name == 'unknown' and not og2,
+      '引导帧第2帧: 点色认出大白气泡 -> 交 unknown 照着落点表点, 一次 OCR 都不花')
+
+# ---------- 场景6d: OCR 缓存复用 + reset() 作废(纯点色后 step() 走不到这条路, 直接问 Vision) ----------
 one = Image.open(os.path.join(D, 'shots/other_quest_0022.png')).convert('RGB')
 v = app.vision
 ROI = (0.0, 0.1, 1.0, 0.9)
+v.reset()
 v.changed_big = False
+_c0, r_cold = v.ocr(one, region=None, scale=0.5, min_gap=999)   # 冷启动 -> 必跑
 _c1, r_cache = v.ocr(one, region=None, scale=0.5, min_gap=999)
 _c2, r_roi = v.ocr(one, region=ROI, scale=0.5, min_gap=999)
 v.reset()
 _c3, r_reset = v.ocr(one, region=ROI, scale=0.5, min_gap=999)
-print(f'[6b] 复用={r_cache} 换ROI={r_roi} reset后={r_reset}')
-check(not r_cache, '未到 min_gap 且画面没变 -> 复用上轮文字坐标, 不重跑 OCR')
+print(f'[6d] 冷跑={r_cold} 复用={r_cache} 换ROI={r_roi} reset后={r_reset}')
+check(r_cold and not r_cache, '未到 min_gap 且画面没变 -> 复用上轮文字坐标, 不重跑 OCR')
 check(r_roi, '换 ROI 必须重跑 —— 旧坐标属于别的区域')
 check(r_reset, 'reset() 后首帧重新 OCR —— 旧缓存不能跨窗口尺寸复用')
 
-# ---------- 场景6c: 真机 03:54 那一帧的最小复现: 爆炸动画把指纹点大面积盖掉 ----------
+# ---------- 场景6c: 真机 03:54 那一帧的最小复现(中性帧单帧闪现, 第1帧就该白等): 爆炸动画把指纹点大面积盖掉 ----------
 # 页面本身还是战斗页, 只是这一帧点色零命中。旧版当场烧一次全图 OCR; 现在只白等一帧。
-import numpy as np
-_b = Image.open(os.path.join(D, 'shots/battle_full.png')).convert('RGB')
-_arr = cp.to_arr(_b).copy()
-_arr[150:1006, :] = (_arr[150:1006, :] * 0 + 200).astype(np.uint8)   # 糊成一片亮灰, 谁都不像
-blotted = Image.fromarray(_arr)
+blotted = NEUTRAL
 _p, _sc, _src = route_prints(ALL_PAGES, cp.to_arr(blotted))
 check(_p is None, f'造出来的动画帧确实点色零命中 (score={_sc:.3f})')
 app._act_gap = 0
 _ocr_before = OCR_STEPS
 QUEUE[:] = ['shots/battle_full.png']          # fake_capture 只读 QUEUE[0], 所以一帧一换
-r1 = run('anim1')
+r1 = run('anim1', fresh=True)
 QUEUE[:] = [blotted]
 r2 = run('anim2')
 QUEUE[:] = ['shots/battle_full.png']
@@ -189,7 +218,7 @@ soft = make_soft('shots/battle_full.png', 'battle')
 p, sc, src = route_prints(ALL_PAGES, soft)
 print('[7] 软命中帧: %s %s %.3f (原图遮 1 点)' % (p.name, src, sc))
 app._act_gap = 0
-app.clicked_cells = set()
+app.clicked_cells = {}
 app.last_cell = 0
 QUEUE[:] = [soft] * 3
 s1 = run('soft1')

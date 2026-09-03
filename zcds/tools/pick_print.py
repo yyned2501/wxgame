@@ -66,9 +66,31 @@ LABELS = {
     'matching': ['shots/sm_after'],
     'chest_open': ['shots/chest_open_claim', 'shots/chest_open_close', 'shots/chest_open_reward'],
     'versus': ['shots/versus_live005730.png'],
+    # 2026-09-03 07:39 真机新增: 升级领奖页(蓝六边形军衔 + 木箱 + 黄色"领取")
+    # 旧版没这一页 -> 点色零命中 -> 白烧 OCR 还判 unknown -> 整轮空转
+    'levelup': ['shots/levelup_live073932.png'],
+    # 2026-09-03 08:00 真机新增: 英雄等级面板(主页左上角等级六边形 (30,113) 点开)
+    # 内容区(骑士图/六边形数字/奖励图标)会随等级变 -> 标定只在标题带+面板边框里挑点
+    'hero_level': ['shots/hero_level_live074830.png'],
+    # 2026-09-03 08:36 真机新增: 竞技场晋级页(打完 3 场后 result[继续] 跳这里, 左侧青色进度条+橙色横幅+3 个奖励图标)
+    # 页面完全静态(15 帧判据像素数一模一样), 但**地图美术/横幅文字会随竞技场等级变** -> 标定域要避开
+    'arena': ['shots/arena_live084600.png', 'shots/arena_live084601.png', 'shots/arena_live084602.png',
+              'shots/arena_live084603.png', 'shots/arena_live084604.png', 'shots/arena_live084605.png',
+              'shots/arena_live084606.png', 'shots/arena_live084607.png', 'shots/arena_live084608.png',
+              'shots/arena_live084609.png', 'shots/arena_live084610.png', 'shots/arena_live084611.png',
+              'shots/arena_live084612.png'],
+    # 2026-09-03 09:00 真机: 大厅被[新手引导模态]整体压暗的那批帧(账号改版后)。
+    #   它们**不是** lobby 的训练样本: 压暗层把除[底部导航栏/气泡/手型]以外的像素全部
+    #   往黑里压, 拿它们标出来的指纹是纸糊的(靠 +-19 容差在近黑像素上蒙混过关)。
+    #   归 other 组 = verify 要求任何页面指纹都不许中它们。
+    'lobby_dim': [],
     'other': ['shots/dbg', 'shots/probe_flag0', 'shots/st_0', 'shots/guide_live1', 'shots/guide_live3', 'shots/watch_124711',
               'shots/watch_124723', 'shots/watch_124735', 'shots/watch_124746',
-              'shots/watch_124758', 'shots/other_quest_0022'],
+              'shots/watch_124758', 'shots/other_quest_0022',
+              # 2026-09-03 12:24 真机: 放完的激励视频广告页(整页黑 + 顶栏[关闭])。
+              # 刻意不标指纹: 广告 chrome 是白字黑底, 标上去在任何页都容易误中;
+              # 它的出口是点色几何判据 pages/base.py::ad_close_pos -> 归 other 组。
+              'shots/ad_popup_live122400'],
 }
 # ---- 自动登记真机帧: 只要把 shots_live 挑出来的帧按 <label>_live<HHMMSS>.png 放进 shots/,
 #      这里就自动并入 LABELS, 不必再手改本文件(标定闭环少一步 manual)。
@@ -82,7 +104,11 @@ for _lbl in list(LABELS):
             _live_added[_lbl] += 1
 
 # 归到同一"页面身份"的标签(同一 Page 类的多种形态)
-GROUPS = {'vip_popup': ['vip_popup', 'vip_month']}
+# other 组的语义由 verify 钉住: 这些帧必须一张指纹都不中(= 没有任何页面敢冒充它们)。
+# arena(竞技场晋级页)是刻意不标指纹的: 版面内容(地图美术/横幅文字/奖励图标)全随等级变,
+#   硬标只会标在文字像素上 —— 正是 2026-09-03 lobby 改版失效的那个坑。它的出口是
+#   [左下角青色返回箭头]这个点色判据, 见 pages/base.py back_arrow_pos。
+GROUPS = {'vip_popup': ['vip_popup', 'vip_month'], 'other': ['other', 'arena', 'lobby_dim']}
 
 _cache = {}
 
@@ -194,6 +220,20 @@ def _pick_units(own, foreign, centers, pts, per, args):
     rate = foreign_u.mean(0)                              # 每单元在其他页的误中比例
     need = max(1, int(math.ceil(len(own) * args.min_frames)))
     pool = np.flatnonzero(own_u.sum(0) >= need)
+    # --min-lum: 亮度地板。参考色太暗的点没有判别力(容差 +-19 直接盖住整个暗色区,
+    #   任何深色像素都算命中) -> 近黑点一律不进池。0=关闭(保持旧行为)。
+    if args.min_lum:
+        px0 = np.array([own[0][centers[i][1], centers[i][0]] for i in pool], int)
+        lum = px0.mean(1)
+        keep = lum >= args.min_lum
+        if args.min_chroma:
+            # 饱和度地板: 白字/灰描边(max-min 很小)在任何页都到处都是, 标上去=没标。
+            chr_ = px0.max(1) - px0.min(1)
+            keep &= chr_ >= args.min_chroma
+        if args.min_lum or args.min_chroma:
+            print(f'    地板(亮度>={args.min_lum:.0f} / 饱和>={args.min_chroma:.0f}): '
+                  f'剔掉 {int((~keep).sum())} / 剩 {int(keep.sum())}')
+        pool = pool[keep]
     print(f'    候选单元 {n} / 本形态稳定 >= {need}/{len(own)} 帧 {len(pool)} 个')
     if not len(pool):
         return [], rate
@@ -352,6 +392,10 @@ def main():
     p.add_argument('--degree', type=float, default=85, help='匹配相似度')
     p.add_argument('--pos-tol', dest='pos_tol', type=int, default=1)
     p.add_argument('--min-sep', dest='min_sep', type=int, default=45, help='单元间最小距离')
+    p.add_argument('--min-lum', dest='min_lum', type=float, default=0.0,
+                   help='候选单元中心像素最低平均亮度(默认 0=不过滤; 建议 70, 近黑点无判别力)')
+    p.add_argument('--min-chroma', dest='min_chroma', type=float, default=0.0,
+                   help='候选单元中心像素最低饱和度(max-min, 默认 0=不过滤; 建议 40)')
     p.add_argument('--min-frames', dest='min_frames', type=float, default=1.0,
                    help='单元在本形态多少比例的帧里稳定(默认 1.0=全部)')
     p.add_argument('--drop-lonely', dest='drop_lonely', action='store_true',

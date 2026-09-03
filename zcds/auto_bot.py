@@ -29,7 +29,9 @@ from colorprint import REF_SIZE
 from config import PAGE_CFG
 from vision import Vision, ScreenFeature
 from pages import ALL_PAGES
-from pages.base import detect_ocr, is_soft, is_transition, route_prints
+from pages.base import (AD_PILL_SHRINK, NAV_LOBBY_TAB, ad_close_pos, ad_pill_right,
+                        back_arrow_pos, detect_ocr, guide_targets, is_soft, is_transition,
+                        nav_present, nav_tab_cx, route_prints)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(ROOT, 'bot.log')
@@ -40,6 +42,15 @@ SOFT_ACT_AFTER = 2
 # 战斗爆炸/掉落动画会临时盖住指纹点(实测 1 帧 score 0.07), 下一帧就恢复全中,
 # 旧版每出现一帧这种图就白烧 675ms 还把它判成 unknown 去点遮罩。
 NO_HIT_OCR_AFTER = 2
+# 黑屏连续这么多帧就不再当转场: 放完的激励视频广告页整页是黑的(真机实测 31 帧/4 分钟干等),
+# 只有这种赖着不走的黑屏才去点色找右上角[关闭]; 真转场 1~2 帧就恢复, 走不到这一步。
+BLANK_AD_AFTER = 2
+# 卡页取证(2026-09-03 07:39 教训): 真机冒出一张没标指纹的新页面时, 点色全表零命中 ->
+#   判成 unknown -> 只会点遮罩/睡 45s, 实测 7s 一圈原地空转, 而日志里一行异常都没有。
+#   现在: 同一个"该动手"的页连着 STUCK_AFTER 轮一次都没动 -> 存一帧 shots_live/stuck_*.png
+#   并 WARNING。battle/matching/versus/unknown/ad_popup 是合法的"等着不动手"页, 不计。
+STUCK_AFTER = 20                 # 约 60s(每轮 poll ~3s)
+STUCK_EXEMPT = ('battle', 'matching', 'versus', 'unknown', 'ad_popup')
 
 
 def setup_logging():
@@ -68,7 +79,7 @@ class App:
         # 页面执行上下文
         self.f = None                    # 当前 ScreenFeature
         self.battles = 0
-        self.clicked_cells = set()
+        self.clicked_cells = {}        # key -> 点击时刻(battle 页按 CELL_RETRY 过期解禁)
         self.last_cell = 0
         self.last_action = {}
         self.blocked = {}                # key -> 解禁时刻(跨页拉黑, 见 pages/base.py chest_slot_key)
@@ -82,6 +93,17 @@ class App:
         self._soft_page = None           # 上一帧软命中的页(软命中要连续若干帧才算稳)
         self._soft_streak = 0
         self._nohit_streak = 0           # 点色连续零命中的帧数(到第 2 帧才肯花全图 OCR)
+        self._stuck_page = None          # 卡页统计: 上一轮的页名
+        self._stuck = 0                  # 卡页统计: 该页连续零动作轮数
+        # 看广告窗口(2026-09-03 12:47 定案): _ad_until 非 0 = 窗口开着, 主循环交 _ad_tick 管
+        self._ad_t0 = 0.0                # 本轮广告开始时刻
+        self._ad_until = 0.0             # 窗口硬上限时刻(= 开始 + AD_WATCH_TOTAL)
+        self._ad_pill_max = 0            # 本场广告左上状态药丸见过的最大右边界(判"放完了")
+        self._ad_logged = 0.0            # 上次"播放中"播报的时刻
+        self._ad_seen = False            # 是否真见过广告 chrome(见过才允许等满全程)
+        self._ad_closing = False         # 已点过[关闭], 正在确认它真的关掉了
+        self._ad_close_t = 0.0
+        self._ad_retry_at = 0.0
 
     # ---- 上下文工具(供页面调用) ----
     def click(self, x, y):
@@ -121,6 +143,103 @@ class App:
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
         u32.EnumChildWindows(self.hwnd, WNDENUMPROC(cb), 0)
         return h or u32.ChildWindowFromPoint(self.hwnd, ctypes.wintypes.POINT(100, 100))
+
+    # ==================== 看广告窗口 ====================
+    # (用户 2026-09-03 12:47 指定: "点击黄色的看广告领取, 可以看广告的地方就自动看完")
+    # 窗口一旦 arm(结算页点到黄色[领取] / 主循环撞见黑屏广告页), 主循环就**停止定页、
+    # 停止 OCR、停止一切点击**, 只由 _ad_tick 管这一件事, 直到广告放完并关掉。
+    # 为什么要专门的窗口: 广告创意每帧都变(点色定不了页), 而中途点[关闭]会让奖励作废
+    #   并弹"是否继续观看视频"挽留框 —— 所以"什么时候才准点关闭"必须由时间+放奖判据来管。
+    # 判"放完了"(零 OCR): 左上那颗状态药丸的右边界。实拍 2026-09-02 12:47 连拍:
+    #   "广告 | 27 秒后可获得奖励" -> 211 / "...8 秒..." -> 204 / "广告 | 已获得奖励" -> 164
+    #   同一句文案在不同广告 SDK 下宽度不同(另一路实测 209) -> 只能跟本场最宽比, 见 pages.base
+    AD_WATCH_MIN = 12.0       # 这之前绝不动手: 提前关闭 = 奖励作废 + 弹挽留框
+    AD_WATCH_MAX = 40.0       # 实拍倒计时 30s + 尾帧; 等满这么多秒就认定"放完了"
+    AD_WATCH_TOTAL = 100.0    # 一条广告最多占用主循环这么久, 超了撒手(防死等)
+    AD_CLOSE_RETRY = 3.0      # 点过[关闭]后每这么多秒复检: 还赖在广告页就再点一次
+    AD_CLOSE_CONFIRM = 12.0   # 关闭动作最多盯这么久(正常下一帧就已经离开广告页)
+    AD_NOT_AD_AT = 4.0        # 等了这么久还是"游戏自己的页" -> 认定根本没进广告, 撒手
+
+    def start_ad_watch(self, why=''):
+        """arm 看广告窗口: result 点完黄色[领取]后调用, 或主循环撞见广告页时调用"""
+        now = time.time()
+        self._ad_t0, self._ad_until = now, now + self.AD_WATCH_TOTAL
+        self._ad_pill_max, self._ad_logged = 0, now
+        self._ad_seen, self._ad_closing = False, False
+        self._ad_close_t = self._ad_retry_at = 0.0
+        logging.info(f'[广告] 开始看广告({why}): 期间不定页/不跑 OCR/不点击; '
+                     f'放完判据 = 状态药丸缩窄 或 等满 {self.AD_WATCH_MAX:.0f}s; '
+                     f'最长 {self.AD_WATCH_TOTAL:.0f}s')
+
+    def _end_ad_watch(self):
+        self._ad_until = 0.0
+        self._ad_closing = False
+
+    def _ad_tick(self, img):
+        """看广告窗口的一轮。
+        -> 'wait'   本轮什么都不做(也不花 OCR)
+        -> 'acted'  本轮点了[关闭]
+        -> 'done'   广告确实关掉了 / 确认已离开广告页 -> 交回正常路由(同一帧就能认出)
+        -> 'giveup' 超时无奈或压根没进广告 -> 交回正常路由
+        """
+        now = time.time()
+        waited = now - self._ad_t0
+        if now > self._ad_until:
+            logging.warning(f'[广告] 看了 {waited:.0f}s 仍没放完 -> 撒手交回正常路由(防死等)')
+            self._end_ad_watch()
+            return 'giveup'
+        pos = ad_close_pos(img)
+        if pos is not None:
+            self._ad_seen = True
+        # 1) 已经点过一次[关闭]: 还赖在广告页就重补一次, 认不出广告页了就交回主循环
+        if self._ad_closing:
+            if pos is None:
+                logging.info(f'[广告] 点[关闭]后 {now - self._ad_close_t:.0f}s 已离开广告页 -> 交回正常路由')
+                self._end_ad_watch()
+                return 'done'
+            if now - self._ad_close_t >= self.AD_CLOSE_CONFIRM:
+                logging.warning(f'[广告] 点[关闭]后 {self.AD_CLOSE_CONFIRM:.0f}s 还赖在广告页 -> 交回正常路由')
+                self._end_ad_watch()
+                return 'done'
+            if now >= self._ad_retry_at:
+                self._ad_retry_at = now + self.AD_CLOSE_RETRY
+                self._ad_close_t = now
+                logging.warning(f'[广告] 还赖在广告页 -> 再点一次[关闭] {pos}')
+                self.click(*pos)
+                return 'acted'
+            return 'wait'
+        # 2) 压根没进广告(点[领取]没命中 / 弹的是别的窗): 别把主循环锁死在这
+        if (not self._ad_seen and waited >= self.AD_NOT_AD_AT
+                and self._ad_page_hard(img)):
+            logging.warning(f'[广告] 等了 {waited:.0f}s 认出的是游戏自己的页且始终没有广告顶栏 '
+                            f'-> 判定没在看广告, 交回正常路由')
+            self._end_ad_watch()
+            return 'giveup'
+        # 3) 正在放: 一帧都不点, 只盯状态药丸有没有缩窄(= 文案换成"已获得奖励")
+        if pos is not None:
+            pr = ad_pill_right(img)
+            shrink = False
+            if pr is not None:
+                self._ad_pill_max = max(self._ad_pill_max, pr)
+                shrink = self._ad_pill_max - pr >= AD_PILL_SHRINK
+            if waited >= self.AD_WATCH_MIN and (shrink or waited >= self.AD_WATCH_MAX):
+                how = (f'药丸缩窄 {self._ad_pill_max}->{pr} = 已获得奖励' if shrink
+                       else f'等满 {self.AD_WATCH_MAX:.0f}s')
+                logging.info(f'[广告] 看了 {waited:.0f}s, {how} -> 点[关闭] {pos}')
+                self.click(*pos)
+                self._ad_closing = True
+                self._ad_close_t = now
+                self._ad_retry_at = now + self.AD_CLOSE_RETRY
+                return 'acted'
+        if now - self._ad_logged >= 10.0:
+            self._ad_logged = now
+            logging.info(f'[广告] 播放中 {waited:.0f}s: 本轮不动作, 也不花 OCR')
+        return 'wait'
+
+    def _ad_page_hard(self, img):
+        """广告窗口里的"根本没在看广告"探针: 点色能**硬命中**某个已知页(2ms, 零 OCR) => 还留在游戏里"""
+        page, _score, src = route_prints(self.pages, img, prefer=self.expected or ())
+        return page is not None and not is_soft(src)
 
     def acted(self, key, gap=None):
         """动作冷却: True=还在冷却期(跳过); False=可以执行并刷新"""
@@ -195,6 +314,14 @@ class App:
             logging.warning('降低微信优先级失败(可忽略): %s', e)
 
     # ---- 惰性文字特征(点色优先) ----
+    def page_by_name(self, name):
+        """按名字取页面对象 —— 给'不标指纹、只能靠上下文推出身份'的页用(tab_other)。
+        这些页永远进不了 route_prints 的候选表, 所以只能显式点名。"""
+        for pg in self.pages:
+            if pg.name == name:
+                return pg
+        return self.pages[-1]
+
     def need_text(self):
         """点色命中时默认不跑 OCR; 动作层真需要读字, 才现补一次本页 ROI OCR(每轮至多一次)"""
         if self._text_done or self.f is None:
@@ -224,12 +351,76 @@ class App:
         except Exception as e:
             logging.warning('[存帧] 失败: %s', e)
 
+    # ---- OCR 兜底 = 白捡一条"待标语料"(2026-09-03 加) --------------------------
+    # 真机长测里剩下的 OCR 路由只有 result / vip_popup 两页(它们有种没进语料的版式),
+    # 但 --shots 0 时这些帧一帧都不落盘 -> 下次还是没语料标, 永远补不上。
+    # 所以: 只要定页走了全图 OCR(src=='ocr'), 就把这一帧存进 shots_live/, 标完就少一条 OCR。
+    OCR_SHOT_MAX = 20           # 一轮最多存 20 张, 别把 shots_live 灌满
+    OCR_SHOT_GAP = 20.0         # 同一页两次存帧至少隔 20s(连着几帧都是同一屏, 存一张够)
+
+    def _save_ocr_shot(self, page, img):
+        """走了 OCR 兜底 -> 说明这屏点色认不出, 存成待标语料(零行为改动, 只多写一张 png)"""
+        at = getattr(self, '_ocr_shot_at', None)
+        if at is None:
+            at = self._ocr_shot_at = {}
+            self._ocr_shots = 0
+        if self._ocr_shots >= self.OCR_SHOT_MAX:
+            return
+        now = time.time()
+        if now - at.get(page, 0.0) < self.OCR_SHOT_GAP:
+            return
+        d = os.path.join(ROOT, 'shots_live')
+        os.makedirs(d, exist_ok=True)
+        fn = 'ocr_%s_%s.png' % (page, time.strftime('%H%M%S'))
+        try:
+            img.save(os.path.join(d, fn))
+            at[page] = now
+            self._ocr_shots += 1
+            logging.info(f'[待标语料] {page} 是靠 OCR 认出来的 -> 存帧 shots_live/{fn} '
+                         f'(登记进 pick_print.LABELS 后这条 OCR 路由就能换成点色)')
+        except Exception as e:
+            logging.warning('[待标语料] 存帧失败: %s', e)
+
+    def _flag_stuck(self, page, acted):
+        """卡页检测: 只报警 + 存帧取证, 绝不代替页面做任何点击"""
+        if page is None or acted or page.name in STUCK_EXEMPT:
+            self._stuck_page, self._stuck = None, 0
+            return
+        if page.name != self._stuck_page:
+            self._stuck_page, self._stuck = page.name, 0
+        self._stuck += 1
+        if self._stuck != STUCK_AFTER:
+            return
+        img = getattr(self.f, 'img', None)
+        if img is None:
+            return
+        d = os.path.join(ROOT, 'shots_live')
+        os.makedirs(d, exist_ok=True)
+        fn = 'stuck_%s_%s.png' % (page.name, time.strftime('%H%M%S'))
+        try:
+            img.save(os.path.join(d, fn))
+            logging.warning('[卡页] %s 连续 %d 轮零动作 -> 存帧 shots_live/%s '
+                            '(多半是撞上新页面没标指纹, 或按钮位置/颜色变了)',
+                            page.name, self._stuck, fn)
+        except Exception as e:
+            logging.warning('[卡页] 存帧失败: %s', e)
+
     def step(self):
         """跑一轮: 点色定页(零 OCR) -> 只有声明要读字的页才 OCR 本页 ROI -> 动作.
         返回 (page, acted, ocr_ran)"""
         self.ensure_window_size()
         img = self.vision.grab()
         self._text_done = False
+        # 0) 看广告窗口开着 -> 这一轮只归它管: 不定页、不跑 OCR、不乱点(见 _ad_tick)
+        if self._ad_until:
+            r = self._ad_tick(img)
+            if r in ('wait', 'acted'):
+                self.f = ScreenFeature(img=img, boxes=[], joined='')
+                self._soft_page, self._soft_streak = None, 0
+                self._trans_streak = 0
+                self._nohit_streak = 0
+                return None, r == 'acted', False
+            # 'done'/'giveup' -> 窗口已关, 同一帧继续往下走正常路由(少白等一轮)
         # 1) 定页只看点色指纹: 实测 2ms 判完全表, 同样的轮次跑全图 OCR 要 675ms
         page, score, src = route_prints(self.pages, img, prefer=self.expected or ())
         soft = is_soft(src)
@@ -246,6 +437,20 @@ class App:
                 if self.shots:
                     self.shots -= 1
                     self._save_shot(img, 'other')
+                # 黑屏赖着不走 = 不是转场, 是激励视频广告页 -> 开"看广告窗口"(看完才关)
+                # 旧版(12:31)在这里直接点[关闭]: 撞上正在放广告的黑屏帧就会提前关闭 -> 奖励作废。
+                # 现在交给 _ad_tick: 它自己会等状态药丸缩窄(=已获得奖励)或等满才动手。
+                if why == '黑屏' and self._trans_streak >= BLANK_AD_AFTER and ad_close_pos(img) is not None:
+                    if not self._ad_until:
+                        logging.warning(f'[转场] 黑屏连续 {self._trans_streak} 帧 -> 不是转场, '
+                                        f'是激励视频广告页 -> 开始看广告(放完自动关)')
+                        self.start_ad_watch('撞见广告页')
+                    r = self._ad_tick(img)
+                    if r == 'acted':
+                        self._trans_streak = 0
+                        return None, True, False
+                    if r == 'wait':
+                        return None, False, False
                 if self._trans_streak % 10 == 1:
                     logging.warning(f'[转场] {why}帧(连续 {self._trans_streak} 帧) '
                                     f'-> 本轮不动作, 也不花 OCR')
@@ -260,14 +465,46 @@ class App:
                 logging.warning(f'[兜底] 点色零命中 第{self._nohit_streak}/{NO_HIT_OCR_AFTER}帧'
                                 f'(上一帧={self.cur_page}) -> 本轮不动作, 也不花 OCR')
                 return None, False, False
-            self._nohit_streak = 0
-            # 2c) 连着两帧都没有任何指纹(侧页/新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR
-            self.f, ocr_ran = self.vision.ocr(img, force=True)
-            self._text_done = True
-            page, score = detect_ocr(self.pages, self.f)
-            src = 'ocr' if page.name != self.pages[-1].name else 'unknown'
-            self.print_confirmed = False
-            self._soft_page, self._soft_streak = None, 0
+            # 2b2) 侧页出口(2026-09-03 08:36 竞技场晋级页教训): 这类页面内容随等级变,
+            #      标指纹只能标在文字/地图美术上(= 下次改版又整片失效, lobby 刚踩过), 所以刻意不标。
+            #      但[左下角青色返回箭头]本身就是点色可认的身份 + 出口 -> 直接交 unknown,
+            #      不必再花 675ms 全图 OCR 去猜页面名字(猜出来也没有对应的动作层)。
+            #      同样的道理适用于[新手引导模态]: 大白气泡 + 手套指向哪里就该点哪里,
+            #      这件事用 1.8ms 的行游程就能判出来, 完全不需要 OCR。
+            #      顺序: 引导模态(盖在别人家页面上, 先点掉) -> 兄弟页签(导航栏在) -> 侧页箭头。
+            #      页签必须排在箭头前面: 真机实测卡牌页左下那颗青色卡牌图标会被
+            #      back_arrow_pos 误认成返回箭头(84,960) —— 那正好是页签自己, 点它原地打转。
+            guide = guide_targets(img)
+            on_tab = (not guide and nav_present(img)
+                      and nav_tab_cx(img) != NAV_LOBBY_TAB[0])
+            arrow = None if (guide or on_tab) else back_arrow_pos(img)
+            if on_tab or guide or arrow is not None:
+                # 认出出口 -> 停在"已升级"水位: 下一帧还零命中就继续出手, 不必再白等一帧
+                # (旧版这里把计数清 0, 结果引导页/页签页每隔一帧才动一次手)
+                self._nohit_streak = NO_HIT_OCR_AFTER - 1
+                ocr_ran = False          # 出口判据本身就是颜色, 一个字都不读
+                self.f = ScreenFeature(img=img, boxes=[], joined='')
+                self._soft_page, self._soft_streak = None, 0
+                if on_tab:
+                    logging.warning(f'[页签] 点色零命中但导航栏在(亮着的是 x={nav_tab_cx(img)})'
+                                    f' -> 交 tab_other 点中间[战斗]回大厅, 不花 OCR')
+                    page, score, src = self.page_by_name('tab_other'), 1.0, 'escape-tab'
+                else:
+                    what = ('新手引导落点 %s' % (guide[:2],) if guide
+                            else '返回箭头 %s' % (arrow,))
+                    logging.warning(f'[侧页] 点色零命中但认出{what} -> 交 unknown, 不花 OCR')
+                    page, score, src = self.pages[-1], 1.0, 'escape-' + ('guide' if guide else 'arrow')
+            else:
+                # 2c) 连着两帧都没有任何指纹(新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR
+                self._nohit_streak = 0
+                self.f, ocr_ran = self.vision.ocr(img, force=True)
+                self._text_done = True
+                page, score = detect_ocr(self.pages, self.f)
+                src = 'ocr' if page.name != self.pages[-1].name else 'unknown'
+                if src == 'ocr':
+                    self._save_ocr_shot(page.name, img)   # 白捡一条待标语料
+                self.print_confirmed = False
+                self._soft_page, self._soft_streak = None, 0
         else:
             self._trans_streak = 0
             self._nohit_streak = 0
@@ -339,6 +576,7 @@ class App:
                 self.ensure_window()
                 page, acted, _ = self.step()
                 self.steps += 1
+                self._flag_stuck(page, acted)
                 if self.max_steps and self.steps >= self.max_steps:
                     logging.info(f'达到目标轮数 {self.max_steps}, 结束')
                     break

@@ -1,45 +1,109 @@
 # -*- coding: utf-8 -*-
-"""未知页面兜底: 先认侧页返回箭头, 再截图 + 弹窗遮罩试探(上限3次/次)"""
-import logging, os, time
+"""未知页面兜底: 点色认出[引导模态]/[侧页返回箭头]就照着点, 都不认得才试探遮罩。
 
+零 OCR 是本页的硬要求(act_needs_ocr=False): 这两类帧的"身份判据"本身就是颜色
+(大白气泡 + 手套 / 左下角青色箭头), 花 675ms 全图 OCR 既慢又读不出可用信息。
+"""
+import logging
+import os
+import time
+
+import numpy as np
 from config import SHOTS_DIR
 
-from .base import BACK_ARROW_POS, Page, is_back_arrow
+from .base import (NAV_LOBBY_TAB, Page, back_arrow_pos, guide_targets, nav_present,
+                  nav_tab_cx)
 
 MASK_POINTS = [(270, 860), (270, 300), (30, 300), (520, 300), (270, 200)]
 MAX_IDLE = 8
+# ---- "点了没反应"升级表(真机 2026-09-03 08:36 竞技场晋级页死循环 3 分钟的教训) ----
+# 旧版: 看到箭头 -> 点写死的 (63,970) -> 那一格是空白 -> 画面不变 -> 8s 后再来一遍,
+#       无限循环, 而且 acted=True 让主循环的卡页计数器一直归零, 连 WARNING 都刷不出来。
+# 新版: 落点由颜色现算, 再按候选表逐个试; 画面签名一变就重新计数(说明点到了),
+#       候选点完画面还一模一样 -> 判定这页点不动, 存帧取证 + 睡 GIVEUP_SEC。
+ARROW_OFFSETS = [(0, 0), (0, 8), (-8, 0), (8, -6)]
+MAX_TRY = 5                    # 候选落点上限(引导表最多 5 个: 关叉/指尖/下一步/气泡/掌心)
+GIVEUP_SEC = 45
+SIG_SIZE = (28, 51)            # 画面签名: 灰度缩略, 只判"点完这页有没有变", 不做识别
+
+
+def frame_sig(img):
+    a = np.asarray(img.convert('L').resize(SIG_SIZE), dtype=np.uint8)
+    return a.tobytes()
 
 
 class UnknownPage(Page):
     name = 'unknown'
     next_pages = ()
-    # 本页没有点色指纹(只在 OCR 兜底分支出现, 那时 f 里本来就带文字),
-    # 动作层用的返回箭头判据也是纯颜色 -> 不需要额外的 OCR。
     act_needs_ocr = False
+
+    _sig = None
+    _tries = 0
+    _gave_up_at = 0.0
 
     def detect(self, f):
         return 0.0            # 兜底页
 
+    def _reset(self):
+        self._sig, self._tries = None, 0
+
+    def _candidates(self, img):
+        """(这帧是什么, 可点落点列表) —— 引导模态优先: 它盖在别人家页面上, 先点掉才有后续"""
+        pts = guide_targets(img)
+        if pts:
+            return '引导模态', pts[:MAX_TRY]
+        pos = back_arrow_pos(img)
+        if pos is not None:
+            return '侧页返回箭头', [(pos[0] + dx, pos[1] + dy) for dx, dy in ARROW_OFFSETS]
+        # 万一是从 OCR 那条路落进来的兄弟页签, 照样知道该点中间那个回大厅
+        if nav_present(img) and nav_tab_cx(img) != NAV_LOBBY_TAB[0]:
+            return '兄弟页签', [NAV_LOBBY_TAB]
+        return '', []
+
     def act(self, ctx):
-        # 0) 侧页(任务/商店/英雄)左下角有青色返回箭头 -> 点它回大厅, 比瞎点遮罩有效
         img = getattr(ctx.f, 'img', None)
-        if img is not None and is_back_arrow(img):
-            if not ctx.acted('back_arrow', gap=6.0):
-                logging.info(f'[未知] 看到返回箭头, 退出侧页 {BACK_ARROW_POS}')
-                ctx.click(*BACK_ARROW_POS)
-            return True
-        ctx.unknown_idle += 1
-        if ctx.unknown_idle >= MAX_IDLE:
-            from datetime import datetime
-            ts = datetime.now().strftime('%H%M%S')
-            ctx.f.img.save(os.path.join(SHOTS_DIR, f'stuck_{ts}.png'))
-            logging.warning(f'未知界面 x{ctx.unknown_idle}, 截图 shots/stuck_{ts}.png')
-            # 试探关弹窗(每次最多3次遮罩)
-            if ctx.unknown_idle < MAX_IDLE + 3:
-                pt = MASK_POINTS[(ctx.unknown_idle - MAX_IDLE) % len(MASK_POINTS)]
-                logging.info(f'[未知] 试探遮罩 {pt}')
-                ctx.click(*pt)
-            else:
-                time.sleep(45)
-                ctx.unknown_idle = 0
-        return False
+        if img is None:
+            return False
+        what, cands = self._candidates(img)
+        if not cands:
+            self._reset()
+            ctx.unknown_idle += 1
+            if ctx.unknown_idle >= MAX_IDLE:
+                ts = time.strftime('%H%M%S')
+                ctx.f.img.save(os.path.join(SHOTS_DIR, f'stuck_{ts}.png'))
+                logging.warning(f'未知界面 x{ctx.unknown_idle}, 截图 shots/stuck_{ts}.png')
+                if ctx.unknown_idle < MAX_IDLE + 3:
+                    pt = MASK_POINTS[(ctx.unknown_idle - MAX_IDLE) % len(MASK_POINTS)]
+                    logging.info(f'[未知] 试探遮罩 {pt}')
+                    ctx.click(*pt)
+                else:
+                    time.sleep(45)
+                    ctx.unknown_idle = 0
+            return False
+        sig = frame_sig(img)
+        if sig != self._sig:            # 画面变了 = 上一次点击起作用了(或换了页), 重新计数
+            self._sig, self._tries = sig, 0
+        if self._tries >= len(cands):
+            if time.time() - self._gave_up_at < GIVEUP_SEC:
+                return False
+            self._give_up(img, what, cands)
+            self._sig, self._tries = None, 0     # 冷却后重新量一次落点再试一轮
+            return False
+        x, y = cands[self._tries]
+        self._tries += 1
+        logging.info(f'[未知] {what}: 点候选 {self._tries}/{len(cands)} -> ({x},{y})')
+        ctx.click(x, y)
+        return True
+
+    def _give_up(self, img, what, cands):
+        self._gave_up_at = time.time()
+        try:
+            fn = 'stuck_%s_%s.png' % ('guide' if '引导' in what else 'arrow',
+                                      time.strftime('%H%M%S'))
+            img.save(os.path.join(SHOTS_DIR, fn))
+        except Exception:
+            fn = '(存帧失败)'
+        logging.warning(f'[未知] {what} 的 {len(cands)} 个落点({cands})点完画面零变化 -> '
+                        f'这页点不动, 存帧 {os.path.basename(SHOTS_DIR)}/{fn}, '
+                        f'睡 {GIVEUP_SEC}s 再看'
+                        f'(多半是撞上了没标指纹的新页面)')

@@ -16,7 +16,7 @@ CLOSE_KW = ('点击关闭',)
 
 class ChestOpenPage(Page):
     name = 'chest_open'
-    next_pages = ('chest_open', 'claim_popup', 'lobby', 'unknown')
+    next_pages = ('chest_open', 'claim_popup', 'chest_info', 'levelup', 'hero_level', 'lobby', 'unknown')
 
     # 点色指纹: 由 tools/pick_print.py pick --label chest_open --region 20,50,530,1000 --cluster 40 自动标定(勿手改)
     # 候选区排除微信标题栏(y<50)与左右黑边: 那是窗口外壳, 每页都一样, 拿来判页等于没判

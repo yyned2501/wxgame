@@ -11,7 +11,7 @@
 2026-09-03 点色优先改造后的变化:
   battle 页 act_needs_ocr=False -> 定页只看点色指纹(实测 2ms), 整轮零 OCR,
   所以"进入战斗页的那一帧"就应当直接出手, 不再像旧版那样白等一轮去补 OCR 特征;
-  紧接着的第二帧会被 CELL_COOLDOWN(5s) 挡住, 不会同一格连点两下。
+  紧接着的第二帧会被 CELL_COOLDOWN(2.5s) 挡住, 不会同一格连点两下。
 
 用法(项目根目录): python -X utf8 test_battle_loop.py     退出码 0 = 通过
 """
@@ -45,6 +45,7 @@ except Exception:
     pass
 
 from auto_bot import App            # noqa: E402
+from pages.battle import CELL_COOLDOWN as CELL_CD   # noqa: E402
 
 FAILS = []
 
@@ -88,7 +89,8 @@ def main():
           '进入战斗页的第一帧就出手(点色定页, 不再白等一轮补 OCR)')
     check(not first[4], '战斗页定页+动作整轮零 OCR(旧版全图 OCR ~722ms/轮)')
     check(cooled[0] == 'battle' and not cooled[3],
-          '5s 内的第二帧被 CELL_COOLDOWN 拦住 -> 不会同一格连点两下')
+          'CELL_COOLDOWN(%.1fs) 内的第二帧被拦住 -> 不会同一格连点两下'
+          % CELL_CD)
     if not first[3]:
         print('  前置条件就挂了, 后面不测')
         return 1

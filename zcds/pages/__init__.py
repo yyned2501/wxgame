@@ -11,20 +11,26 @@ from .chest_info import ChestInfoPage
 from .chest_open import ChestOpenPage
 from .diamond_popup import DiamondPopupPage
 from .vip_popup import VipPopupPage
+from .levelup import LevelUpPage
+from .hero_level import HeroLevelPage
 from .versus import VersusPage
+from .tab_other import TabOtherPage
 from .unknown import UnknownPage
 
 ALL_PAGES = [
     AdPopupPage(),
     ClaimPopupPage(),
+    HeroLevelPage(),
     ChestInfoPage(),
     ChestOpenPage(),
     DiamondPopupPage(),
     VipPopupPage(),
     ResultPage(),
+    LevelUpPage(),
     BattlePage(),
     MatchingPage(),
     LobbyPage(),
     VersusPage(),
+    TabOtherPage(),      # 必须在 UnknownPage 之前: 主循环用 pages[-1] 当 unknown
     UnknownPage(),
 ]
