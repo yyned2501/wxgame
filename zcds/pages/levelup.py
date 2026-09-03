@@ -28,7 +28,8 @@ from .base import Page, color_button, color_pixels
 
 class LevelUpPage(Page):
     name = 'levelup'
-    next_pages = ('lobby', 'chest_open', 'claim_popup', 'result', 'hero_level', 'unknown')
+    next_pages = ('lobby', 'chest_open', 'claim_popup', 'result', 'hero_level', 'newcard',
+                    'unknown')   # 真机 16:03: 领完升级奖励直接弹新卡页
     act_needs_ocr = False        # 纯点色页: 主循环不为本页跑 OCR
 
     # 点色指纹: tools/pick_print.py pick --label levelup 分段标定后合并(勿手改)

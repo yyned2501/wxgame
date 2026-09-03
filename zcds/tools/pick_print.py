@@ -74,6 +74,10 @@ LABELS = {
     'hero_level': ['shots/hero_level_live074830.png'],
     # 2026-09-03 08:36 真机新增: 竞技场晋级页(打完 3 场后 result[继续] 跳这里, 左侧青色进度条+橙色横幅+3 个奖励图标)
     # 页面完全静态(15 帧判据像素数一模一样), 但**地图美术/横幅文字会随竞技场等级变** -> 标定域要避开
+    # 2026-09-03 16:03 真机新增: 新卡展示页(升级后弹一张新卡, 顶部黄色[新卡] + 中间卡牌美术 +
+    #   底部[白字]点击继续 —— 没有亮紫按钮, 所以 result 的 act() 在这里空转, 整轮卡死 60s。
+    #   卡牌美术/数值随卡变 -> 标定域只能用 --region 限到「与卡无关」的底部带, 见 pages/newcard.py。
+    'newcard': [],
     'arena': ['shots/arena_live084600.png', 'shots/arena_live084601.png', 'shots/arena_live084602.png',
               'shots/arena_live084603.png', 'shots/arena_live084604.png', 'shots/arena_live084605.png',
               'shots/arena_live084606.png', 'shots/arena_live084607.png', 'shots/arena_live084608.png',

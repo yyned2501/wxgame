@@ -33,6 +33,7 @@ from pages.base import (AD_PILL_LEFT_TOL, AD_PILL_LOW_HOLD, AD_PILL_SHRINK, AD_P
                         NAV_LOBBY_TAB, ad_close_pos, ad_pill_state, back_arrow_pos, detect_ocr,
                         find_close_badge, guide_targets, is_soft, is_transition, nav_present,
                         nav_tab_cx, route_prints)
+from pages.unknown import STUCK_DIR_OFFLINE, frame_sig
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(ROOT, 'bot.log')
@@ -95,6 +96,7 @@ class App:
         self._soft_streak = 0
         self._nohit_streak = 0           # 点色连续零命中的帧数(到第 2 帧才肯花全图 OCR)
         self._stuck_page = None          # 卡页统计: 上一轮的页名
+        self._stuck_sig = None           # 卡页统计: 上一轮的画面签名(28x51 灰度缩略)
         self._stuck = 0                  # 卡页统计: 该页连续零动作轮数
         # 看广告窗口(2026-09-03 12:47 定案): _ad_until 非 0 = 窗口开着, 主循环交 _ad_tick 管
         self._ad_t0 = 0.0                # 本轮广告开始时刻
@@ -416,26 +418,37 @@ class App:
             logging.warning('[待标语料] 存帧失败: %s', e)
 
     def _flag_stuck(self, page, acted):
-        """卡页检测: 只报警 + 存帧取证, 绝不代替页面做任何点击"""
-        if page is None or acted or page.name in STUCK_EXEMPT:
-            self._stuck_page, self._stuck = None, 0
-            return
-        if page.name != self._stuck_page:
-            self._stuck_page, self._stuck = page.name, 0
-        self._stuck += 1
-        if self._stuck != STUCK_AFTER:
-            return
+        """卡页检测: 只报警 + 存帧取证, 绝不代替页面做任何点击
+
+        坑(真机 2026-09-03 16:03 新卡页): 点色零命中的那一帧 step() 按 2b 的防抖返回 page=None,
+        下一帧才花全图 OCR 认出 result —— page 就在 None/result 之间来回翻, 而旧版第一句就是
+        "page is None 就清零", 等于让那个防抖自己把卡页计数永远打断: 连着 60s 一次动作都没做成,
+        [卡页] 警报一行都没发(事后全靠数日志才发现)。
+        现在: None 帧沿用上一帧的页名继续算, 但**画面签名 frame_sig 一变就重新计数** ——
+        转场白烟/激励视频每帧都在变 -> 不会误报; 真卡死时画面一动不动 -> 一定数得到 20 帧。
+        看广告窗口(_ad_until)整段豁免: 那本来就是我们故意不动手。
+        """
+        name = page.name if page is not None else self.cur_page
         img = getattr(self.f, 'img', None)
+        sig = frame_sig(img) if img is not None else None
+        same = bool(name) and name == self._stuck_page and sig == self._stuck_sig
+        self._stuck_page, self._stuck_sig = name, sig
+        self._stuck = self._stuck + 1 if same else 1
+        if (acted or self._ad_until or not name or name in STUCK_EXEMPT
+                or self._stuck != STUCK_AFTER):
+            return
         if img is None:
             return
-        d = os.path.join(ROOT, 'shots_live')
+        # 取证帧目录和 unknown._give_up 同一口径(pages.unknown.stuck_dir 的道理):
+        # 离线回归每跑一次就丢几张帧, 不能污染 shots_live/ 这个真机取证目录。
+        d = STUCK_DIR_OFFLINE if getattr(self, 'dry_run', True) else os.path.join(ROOT, 'shots_live')
         os.makedirs(d, exist_ok=True)
-        fn = 'stuck_%s_%s.png' % (page.name, time.strftime('%H%M%S'))
+        fn = 'stuck_%s_%s.png' % (name, time.strftime('%H%M%S'))
         try:
             img.save(os.path.join(d, fn))
-            logging.warning('[卡页] %s 连续 %d 轮零动作 -> 存帧 shots_live/%s '
+            logging.warning('[卡页] %s 连续 %d 轮零动作 -> 存帧 %s '
                             '(多半是撞上新页面没标指纹, 或按钮位置/颜色变了)',
-                            page.name, self._stuck, fn)
+                            name, self._stuck, os.path.relpath(os.path.join(d, fn), ROOT))
         except Exception as e:
             logging.warning('[卡页] 存帧失败: %s', e)
 

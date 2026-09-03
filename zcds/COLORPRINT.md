@@ -210,7 +210,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 而**不是** `LABELS['ad_popup']`：广告 chrome 是白字黑底，标绝对指纹极易在别的黑底页上误中。
 它的出口改用**几何点色**判据 `ad_close_pos()`，见 §18。
 
-## 7. 当前标定状态（语料 256 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 下午实测）
+## 7. 当前标定状态（语料 260 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 傍晚实测）
 
 | 页面 | 形态数 | 判色点/形态 | 单元/形态 | 语料全中 | 异页误中 | margin | 各形态覆盖帧数 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -222,6 +222,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `chest_open` | 1 | 15 | 3 | 8/8 | 0 | 0.40 | 8 |
 | `hero_level` | 1 | 40 | 8 | 5/5 | 0 | 0.12 | 5 |
 | `levelup` | 1 | 25 | 5 | 4/4 | 0 | 0.16 | 4 |
+| `newcard` | 1 | 15 | 3 | 4/4 | 0 | 0.33 | 4 ← 第 15 页，2026-09-03 傍晚新增，标定域被钉死在底部（§21）
 | `matching` | 1 | 20 | 4 | 4/4 | 0 | 0.35 | 4 |
 | `versus` | 1 | 30 | 6 | 4/4 | **4** | **1.00** | 4 ← 唯一一行"异页误中"，见下表后注 |
 | `ad_popup` / `claim_popup` / `diamond_popup` / `unknown` / `tab_other` | — | 无指纹 | — | — | — | — | **不标身份，但出口全是点色**：引导落点 / **关闭徽章（§20）** / 兄弟页签 / 返回箭头（§16）+ `ad_close_pos()`（§18）+ `find_close_badge()`（§8/§12）。只有 `ad_popup` 的**定页**仍是设计上保留的 OCR 例外（§19.4） |
@@ -252,7 +253,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 > 而 4 张兄弟页签帧（`shots/other_live10100*`）就是这条的考官：同一条导航栏、高亮板在别的格子上，
 > 中间这格必须是普通底色，指纹不许中（§16.2/§16.3）。
 
-语料分组：`battle` 70 / `lobby` 50 / `result` 22 / `other` 37（含 §18 那张放完的广告页 + §7 末注的 14 张 `stuck_*` 取证帧）/ `chest_info` 18（含 6 张 `stuck_01*`）/ `arena` 13 / `lobby_dim` 11 / `chest_open` 8 / `vip_popup` 8（另 `vip_month` 2 张归并进它的第二形态）/ `hero_level` 5 / `matching` 4 / `versus` 4 / `levelup` 4 = **256**。
+语料分组：`battle` 70 / `lobby` 50 / `result` 22 / `other` 37（含 §18 那张放完的广告页 + §7 末注的 14 张 `stuck_*` 取证帧）/ `chest_info` 18（含 6 张 `stuck_01*`）/ `arena` 13 / `lobby_dim` 11 / `chest_open` 8 / `vip_popup` 8（另 `vip_month` 2 张归并进它的第二形态）/ `hero_level` 5 / `matching` 4 / `versus` 4 / `levelup` 4 / `newcard` 4 = **260**。
 图名一律对应 `shots\<图名>.png`，各页 `# 形态: …` 注释里列的名字同理。
 带 `_live` 的真机帧由 `tools/pick_print.py` 的自动登记块并入 `LABELS`，不用手改。
 `shots/stuck_*.png`（主循环卡页时自己存的取证帧）也由同一个脚本自动并入 **`other`**，
@@ -389,12 +390,12 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `C:\projects\wxgame\zcds\pages\*.py` | 各页面的指纹（§7）与 `act()` 动作层点色（§12/§13）；声明 `act_needs_ocr = False` 的页整轮不读字 |
 | `C:\projects\wxgame\zcds\tools\pick_print.py` | 标定工具：`check` / `pick` / `verify` |
 | `C:\projects\wxgame\zcds\tools\print_stats.py` | 重算并写回各页指纹的统计注释（`--dry-run` 只看表） |
-| `C:\projects\wxgame\zcds\shots\` | 256 张标定语料（552x1006，含 2026-09-02/03 真机帧 + 主循环自存的 `stuck_*` 取证帧），`LABELS` 以 `shots/<图名>` 引用 |
+| `C:\projects\wxgame\zcds\shots\` | 260 张标定语料（552x1006，含 2026-09-02/03 真机帧 + 主循环自存的 `stuck_*` 取证帧），`LABELS` 以 `shots/<图名>` 引用 |
 | `C:\projects\wxgame\zcds\shots_live\` | 真机取证帧：`peek_*` = 只读探针，`dbg_*` = 主循环 `--shots N`，`probe_*` = 定点探针（**不入库**） |
 | `C:\projects\wxgame\zcds\scratch\` | 一次性逆向脚本与中间产物（**运行时不依赖**，见 `scratch\README.txt`）；`live_probe2.py` / `scale_experiment.py` / `live_stability.py` / `live_collect.py` 是真机取证脚本 |
 | `C:\projects\wxgame\zcds\scratch\scripts\test_chest_paid.py` | 真机帧离线回放：主循环同款 ROI(0.10~0.90) + scale 0.5 跑 11 帧，免费帧必点、付费帧必拒 |
-| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，**256 张**语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限；`CONTEXT_PAGES = ('tab_other',)` 放行"刻意不标指纹"的页） |
-| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：256 语料 + 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
+| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，**260 张**语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限；`CONTEXT_PAGES = ('tab_other',)` 放行"刻意不标指纹"的页） |
+| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：260 语料 + 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
 | `C:\projects\wxgame\zcds\test_cpu_offline.py` | 主循环离线集成（8 个场景，**25 帧只花 1 次 OCR**）：[6] = 点色零命中要连着两帧才肯兜底，[7] = 软命中稳帧放行，[8] = 付费宝箱格拉黑后不再回头点 |
 | `C:\projects\wxgame\zcds\test_battle_loop.py` | 战斗循环回归：进场帧清空 `clicked_cells` 并当场出手，整轮零 OCR |
 | `C:\projects\wxgame\zcds\test_act_zero_ocr.py` | **动作层零 OCR**：`result` / `chest_open` / `lobby` / `chest_info` / `levelup` / `hero_level` 六页逐帧落点表 + 45 帧**反向互斥**（同色黄按钮、同款红徽章在别的页帧上一次都不许出手），桩里把 OCR 入口全改成抛异常（§13） |
@@ -404,7 +405,9 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `C:\projects\wxgame\zcds\test_anchor_print.py` | **锚点相对点色回归**（5 段）：锚点组命中 / 异页 0.00 / 偏移不串台 / 查找 6ms / 真机帧回放（§6.2） |
 | `C:\projects\wxgame\zcds\test_ad_escape.py` | **广告页自救回归**：判据本身（含 6 张正常页零误命中）+ "认出广告页 -> **arm 看广告窗口，但一帧都不点**" + 伪造 `_ad_t0 = time.time()-20` 喂真帧验证"等满才点[关闭]、离开广告页才 `done`" + 全程零 OCR（§18/§19） |
 | `C:\projects\wxgame\zcds\test_ad_watch.py` | **看广告自动领奖回归**（4 段）：① `ad_claim_pos` 判据（17 张结算帧正例 / 218 帧反例，含同色的[立即开箱]）② 药丸右边界读数与「相对缩窄」分界 ③ `_ad_tick` 状态机（等满 / 超时撒手 / 压根没进广告三分支，用 `FakeTime` 顶掉 `auto_bot.time`）④ `step()` 端到端：窗口期间路由表与 OCR 一次都不许被调用 |
-| `C:\projects\wxgame\zcds\test_popup_escape.py` | **弹窗关闭徽章出口回归**（5 段）：徽章帧四判据交叉、`unknown` 落点带 `BADGE_OFFSETS`、`claim_popup`/`diamond_popup` 零 OCR、`diamond_popup` 绝不盲点、820 帧对账里"谁都不认"只剩 3 张（§20） |
+| `C:\projects\wxgame\zcds\test_popup_escape.py` | **弹窗关闭徽章出口回归**（5 段）：徽章帧四判据交叉、`unknown` 落点带 `BADGE_OFFSETS`、`claim_popup`/`diamond_popup` 零 OCR、`diamond_popup` 绝不盲点、828 帧对账里"谁都不认"只剩 3 张（§20） |
+| `C:\projects\wxgame\zcds\pages\newcard.py` | **第 15 页 `newcard`**（新卡展示页）：15 点指纹只取底部两条带（§21.4）、`detect()` **恒返回 0.0**（不给 OCR 抢身份的机会）、`act()` 用 `color_button` 现量白字中心（§21.5） |
+| `C:\projects\wxgame\zcds\test_newcard.py` | **新卡页回归**（6 段）：真机 4 帧硬命中 + 与卡无关性（15 点逐位色差 0）+ 异页零点击 + 真跑 `step()` + 全 828 帧只有这 4 张命中 + `_flag_stuck` 行为级复现（§21.7） |
 | `C:\projects\wxgame\zcds\test_side_page_escape.py` | **侧页逃逸回归**（6 场景，**全程 OCR = 0 次**）：引导模态判定与落点、兄弟页签实测点 `(276,950)`、有箭头无栏的侧页零 OCR、卡牌页箭头误命中但路由先认栏、导航栏语料分界、unknown 同帧点击次数上限（§16） |
 | `C:\projects\wxgame\zcds\scratch\scripts\audit_holdout.py` | 留出集审计：`shots_live/` 里没进过语料的帧逐张定点色 + 判定，统计真要兜底的帧数 |
 | `C:\projects\wxgame\zcds\test_price_guard.py` | 价格护栏回归（39 项）：18 张真机帧回放（**帧表派生自 `LABELS`**，文件名带 `paid` 即付费帧）+ 合成文本框 + 合成图像，全程不依赖 OCR |
@@ -943,9 +946,13 @@ arrow = None if (guide or on_tab or badge is not None) else back_arrow_pos(img)
 徽章这一路 `page = self.pages[-1]`（就是 `unknown`）、`src = 'escape-badge'`，日志刷
 `[侧页] 点色零命中但认出弹窗关闭徽章 (471, 224) -> 交 unknown, 不花 OCR`。
 
-### 20.2 全 820 帧对账（`shots/` 256 + `shots_live/` 577 里所有 552x1006 帧；脚本 `scratch/scripts/badge_cross_0903.py`）
+### 20.2 全 828 帧对账（`shots/` 260 + `shots_live/` 581 里所有 552x1006 帧；脚本 `scratch/scripts/badge_cross_0903.py`）
 
 点色全表定不出页的帧共 **152** 张，四个判据的原始交叉表：
+
+> **傍晚加了 `newcard` 指纹之后复跑（820 → 828 帧）：这 152 和下面 8 行交叉表一格没动** ——
+> 新增的 8 个文件（`shots/newcard_live1603*.png` 4 张 + 它们的真机原件 `shots_live/ocr_result_1603*.png` 4 张）
+> 本来就是**同一张新卡页**，现在全被点色定住，一张都没掉进"定不出页"里。这是 §21 那条修复最硬的副作用检查。
 
 ```
 trans  guide  tab    arrow  badge  n
@@ -973,7 +980,17 @@ False  False  False  False  False   3     -> 只剩这 3 张还要 OCR
 | `shots/other_live_fu02.png` = `shots_live/fu_02.png` | (471, 224) | 符石/装备详情弹窗 |
 | `shots/other_live_hv_summon.png` = `shots_live/hv_summon.png` | (471, 197) | 英灵召唤详情弹窗 |
 
-**三个不同高度（235 / 224 / 197）** —— 这就是「落点只能现算、绝不能写死坐标」的实证。
+| 真机自动命中（`step()` 徽章出口） | 徽章中心 | 是什么弹窗 |
+| --- | --- | --- |
+| 第 18 轮 15:52:57（`unknown`，见 §20.5） | (452, 361) | 结算后连弹的第 5 个弹窗：语料里从来没有过的高度 |
+| 第 19 轮 16:33:33（`hero_level`，n=262） | (469, 172) | 英雄等级页右上角的关闭徽章 —— 又一个语料里没有的高度 |
+| 第 19 轮 16:41:00（`vip_popup`） | (455, 461) | 会员弹窗 |
+| 第 19 轮 16:43:13（`vip_popup`） | (459, 545) | 会员弹窗：目前数到的最靠下一档 |
+| 第 19 轮 16:46:23（`vip_popup`） | (452, 370) | 会员弹窗：和 10:56:28 那次 `act()` 现算出的坐标一模一样 |
+
+**高度已经数到 7 档（172 / 197 / 224 / 235 / 361~370 / 461 / 545），x 也在 452 ~ 471 之间飘** —— 这就是「落点只能现算、绝不能写死坐标」的实证。
+（10:56:28 `vip_popup.act()` 那次现算出的 (452, 370) 和真机徽章 (452, 361) 只差 9px，两条路用的是同一把尺子；第 19 轮 16:46:23 徽章出口自己算出的落点就是 **(452, 370)** —— 同一把尺子第三次对上同一颗徽章。）
+第 19 轮这 4 次徽章出口**全部第 1 候选点即中**，每次 3s 内 `hero_level`/`vip_popup` -> `lobby`，整轮 400 步零 `giveup`、零 `[卡页]`，统计见 §21.8。
 
 ### 20.3 `unknown._candidates()` 里的顺序与落点表
 
@@ -1008,11 +1025,12 @@ MAX_TRY = 5
 | --- | --- | --- |
 | `shots_live/ck_a2.png` | 卡牌页**整页被新手引导压暗**：像素实测 ≈ 参考值 x0.35，手套 + 发光圆圈指着中间[战斗]页签，但**没有大白气泡** → `guide_targets()` 不响；`nav_hits()` = **0/16**（整页压暗把导航栏 16 个静态像素全灭了，dy ±24 扫描确认无位移，纯压暗） | 和 `gs_00` 同一种情形 |
 | `shots_live/gs_00.png` | 同上 | 同上 |
-| `shots_live/ocr_result_133258.png` | 13:32:58 那**唯一一条 OCR 路由**的现场帧（动画盖住一个判色点、软命中门限没够）；还没进 `LABELS` | 补语料 + 重标即可换成点色，不需要新判据 |
+| `shots_live/ocr_result_133258.png` | 13:32:58 那**唯一一条 OCR 路由**的现场帧。本轮用探针把它的「差多少」量清楚了（脚本 `scratch/scripts/probe_r133258.py`）：`result` 指纹 **25 点 / score 0.800 / missing 5 点**，而 5 个缺点**全挤在同一个十字单元 (386~390, 144~148)**（实测色 `5714724` `5320230`）—— 是一次动画糊掉了**一整个**判色十字，不是散点抖动。第二名 `chest_open` 0.400（15 点），margin 0.400 远超 `SOFT_MIN_MARGIN=0.20`，**但**软命中另有 `SOFT_MAX_MISS=1`，缺 5 点的帧天然不放行 | **决定不动**：把它塞进 `LABELS['result']` 再 `pick_print pick` 重标，等于逼 result 指纹丢掉 (388,146) 那一整个十字单元（**25 → 20 点**）去迁就一帧被动画糊住的帧；用 `pos_tol`／加大 degree 硬救则会伤到别的页。下面那个 **3/828** 上界比多救这一帧值钱 —— 真机再攒到同类帧（第 2 张）才说明这是常态、值得为此改指纹 |
 
 为什么**先不放宽** `guide_targets()` 去接 `ck_a2`/`gs_00`：那条判据靠"大白气泡"这个硬特征，
 放宽成"整页压暗 + 有手套"就会误伤一切被半透明遮罩压住的正常页 —— 语料里 `lobby_dim` 那 **11 张**就是同一类压暗帧，
-它们本该走 `lobby` 而不是被当成引导。三条出口谁都不认的帧数现在锁在 **3/820**，这个上界比"多救两张"值钱。
+它们本该走 `lobby` 而不是被当成引导。四条出口谁都不认的帧数现在锁在 **3/828**，这个上界比"多救两张"值钱 ——
+第三张（`ocr_result_133258`）不动的理由见上一节表格右列：代价是**丢掉一整个十字单元**，不是补语料能白捡的。
 
 ### 20.5 回归锁：`test_popup_escape.py`（5 段）
 
@@ -1024,5 +1042,166 @@ MAX_TRY = 5
 | [4] | `DiamondPopupPage().act()`：源码里已无 `ctx.click(270, 300)` 盲点；认不出来 → `False` + **零点击**；有徽章 → 仍点徽章 |
 | [5] | 全语料扫描：点色定不出页 **且** 四条零 OCR 出口全不认的帧数 `<= 3`（上界锁死，防新页面把 OCR 路由重新撑回去） |
 
-真机状态：这条出口 **0 次命中**（§19.6.2 全天日志 `弹窗关闭徽章 0`）—— 语料里那 4 个弹窗都是上午手动点掉的，
-脚本还没在自动流程里撞见过。所以现在只能靠回归锁着，不拿它当"已验证"。
+真机状态：**2026-09-03 15:52:57 首次自动命中**（第 18 轮 `--max-steps 400`，用户在场实测）。日志逐字：
+
+```
+15:52:43 INFO  [结算] 点色命中继续按钮 (275, 829) (累计 3 场)
+15:52:46 WARNING [兜底] 点色零命中 第1/2帧(上一帧=result) -> 本轮不动作, 也不花 OCR
+15:52:49 WARNING [侧页] 点色零命中但认出返回箭头 (47, 949) -> 交 unknown, 不花 OCR
+15:52:49 INFO  [未知] 侧页返回箭头: 点候选 1/4 -> (47,949)
+15:52:57 WARNING [侧页] 点色零命中但认出弹窗关闭徽章 (452, 361) -> 交 unknown, 不花 OCR
+15:52:57 INFO  [指纹] unknown escape-badge 1.00
+15:52:57 INFO  [未知] 弹窗关闭徽章: 点候选 1/4 -> (452,361)
+15:53:05 INFO  [指纹] lobby print-order 1.00        <- 8s 后回大厅, 继续正常挂机
+```
+
+- **`BADGE_OFFSETS` 第 1 个点即中**（`点候选 1/4`），后面三个偏移点这轮仍然没动用 —— 和 §20.3「语料 6 帧全部第一点即中」一致；
+- 落点 **(452, 361) 是语料里没有的第 4 个高度**（235 / 224 / 197 之外），x 也从 465/471 飘到 452 —— 再次证明「只能现算」；
+- 它是**接在箭头出口后面**触发的：那屏是「点掉侧页箭头 → 又露出一个模态弹窗」，两条出口在一分钟内接力，全程 `不花 OCR`；
+- 同轮 372 条路由里这条只有 **1 次**（那 10 条 OCR 是另一张页，见 §21），`giveup` 0、`Traceback` 0。
+
+## 21. 第 15 页 = 新卡展示页（`newcard`）+ 卡页检测器的**翻帧盲区**（2026-09-03 傍晚落地）
+
+### 21.1 现场：打完第 6 场 → 领升级奖励 → 弹出一张谁都不认识的页，空转到步数用完
+
+`bot.log` 16:03:37~16:04:51（第 18 轮 `--max-steps 400` 的最后 74 秒，逐字摘录）：
+
+```
+16:03:37 INFO  [指纹] result print-order 1.00
+16:03:37 INFO  [结算] 点色命中继续按钮 (275, 829) (累计 6 场)
+16:03:40 INFO  [指纹] levelup print-prefer 1.00
+16:03:40 INFO  [升级] 点色命中领取按钮 (275, 776) n=5524     <- 领完升级奖励
+16:03:43 WARNING [兜底] 点色零命中 第1/2帧(上一帧=levelup) -> 本轮不动作, 也不花 OCR
+16:03:51 INFO  [待标语料] result 是靠 OCR 认出来的 -> 存帧 shots_live/ocr_result_160350.png
+16:03:51 INFO  [指纹] result ocr 0.95
+16:03:54 WARNING [兜底] 点色零命中 第1/2帧(上一帧=result) -> 本轮不动作, 也不花 OCR
+16:03:57 INFO  [指纹] result ocr 0.95
+   ... 同一个 6.7s 节奏一直重复 ...
+16:04:51 INFO  [指纹] result ocr 0.95
+16:04:51 INFO  达到目标轮数 400, 结束
+```
+
+那一屏长这样：顶部黄色「新卡」标题、中间一张卡牌美术（这次是**弩炮 · 稀有卡牌**）、底部**白字**「点击继续」——
+**没有 `result` 那颗亮紫 `#CC56FF` 按钮**。于是旧链路每 6.7s 空转一圈，四步各自都在"按设计办事"，合起来是个死循环：
+
+1. 点色全表零命中（实测这 4 帧上 `result.print_score = 0.000`，一张指纹都不中）；
+2. 2b 防抖：零命中先白等一帧 → **返回 `page = None`**；
+3. 2c 花一次**全图 OCR** → OCR 只读到「点击继续」四个字 → 判成 `result` 0.95；
+4. `ResultPage.act()` 在 `CONTINUE_BOX(150,780,420,970)` 里找亮紫按钮 → 找不到 → **`return False`，什么都不点**。
+
+上一轮日志里那 **10 条 `ocr`**（§20 口径下唯一的 OCR 路由）全部来自这一屏。它既不是转场噪声，也不是 `ocr_result_133258.png` 那一类"动画盖住判色点"的软命中漏网 —— 是一张**全新的页面**。
+
+### 21.2 为什么黄色标题和白字带**都不能当身份**
+
+| 候选判据 | 实测（脚本 `scratch/scripts/newcard_top_0903.py` / `newcard_bands2_0903.py`，全 828 帧） | 结论 |
+| --- | --- | --- |
+| 顶部黄字带 `(150,90,400,180)` 宽松黄掩码 `r>200 & g>160 & b<130 & r-b>90` | `n >= 120` 的帧有 **101 张**，而 newcard 自己只有 **n=953**、排第 13 —— 上面压着 `vip_popup` 3390、`watch` 1553、`battle` 1456、`flow3_r0` 1416、`tab_castle` 1299 | 全游戏到处都是这种黄字，**当身份必炸** |
+| 底部白字带 `(150,840,420,890)` `0xFFFFFF` degree 90 | `n > 0` 的帧 **429/828**（一半以上页面在这条带里有白像素），`n >= 400` 的有 23 张 | 单看像素数**分不开页**：`battle` 帧也能到 442/439/437 |
+
+白字带唯一**站得住**的性质是「同一页的 4 帧一模一样」：newcard 4 帧全 = **938 像素、中心 (276,864)**，而真结算页只有 **187**（`flow3_r1`）/ **6**（`result_live040817`）。
+→ 所以这条带**只配当动作判据**（§21.5），身份仍必须由 15 点指纹来定。
+
+### 21.3 标定域对照实验：全域标定的结果是"下一张卡就废"
+
+| 标定域 | 挑出来的点 | 复核 | 处置 |
+| --- | --- | --- | --- |
+| 全域 `pick --label newcard -n 5` | 含 **(168,476)**、**(256,524)** | 看着 4/4 全中 | 🔴 **弃**：这两点正压在 `[远程][机械]` 兵种徽章和卡名「**弩炮**」的笔画上 —— 换一张卡（卡名、兵种、美术全变）整片失效。§9 第 1 条说的"假厚"换了个方式回来 |
+| `--region 0,830,552,1006`（底部 176 行） | 3 个十字单元 / 15 点 | **本页全中 4/4 / 异页误中 0 / margin 0.33**（异页最高 5/15），4 帧 15 点**逐位相同，最大色差 0**（容差 ±19） | ✅ 采用 |
+
+底部这 176 行里只有两样东西：**「点击继续」白字**和**它下面那条紫色装饰底**——两者都是**引擎画的通用 UI**，不随卡变。这和 §7 `lobby` 那行注（"标定域钉死在页签选中态，因为它是页面身份本身"）是同一条纪律。
+
+### 21.4 指纹（15 点 / 3 单元，`pages/newcard.py`，由 `print_stats.py` 回写统计）
+
+```
+[236,858,0xFFFFFF][238,858,0xFCFCFC][234,858,0x6D6D6E][236,860,0xFFFFFF][236,856,0xFFFFFF]
+[292,862,0xFFFFFF][294,862,0xFFFFFF][290,862,0xFEFEFE][292,864,0xFFFFFF][292,860,0xC9C9C9]
+[260,914,0x2D255C][262,914,0x2D255C][258,914,0x2D245C][260,916,0x2D255C][260,912,0x2D255C]
+```
+
+注册顺序（`pick_print verify` 的列序即身份）：
+`ad_popup > claim_popup > hero_level > chest_info > chest_open > diamond_popup > vip_popup > result > `**`newcard`**` > levelup > battle > matching > lobby > versus > tab_other > unknown`
+—— 刻意排在 `result` **之后**：结算页先拿它先判，newcard 只接"结算页都不像"的帧。路由实测（`newcard_route_0903.py`）：4 帧在 `prefer=()` / `('levelup',)` / `('result',)` 下**全部** `newcard / order / 1.00 / soft=False`。
+
+### 21.5 动作层：`act()` 现量白字中心，`detect()` 恒 0.0
+
+```python
+CONTINUE_BOX = (150, 840, 420, 890)     CONTINUE_COLOR = 0xFFFFFF     CONTINUE_MIN_PX = 400
+```
+
+| 帧 | `color_bbox(CONTINUE_BOX, 0xFFFFFF, 90)` | `act()` |
+| --- | --- | --- |
+| `newcard_live160350/160411/160431/160451`（4 帧） | **(276, 864) n=938** | 点 (276,864) |
+| `shots/flow3_r1.png`（真结算页） | n=187 | 不动作 |
+| `shots/result_live040817.png` / `shots_live/ocr_result_133258.png` | n=6 | 不动作 |
+| `shots/levelup_live073932.png` | `None` | 不动作 |
+
+`MIN_PX = 400` 卡在 938 和 187 中间。另两个设计点：
+- **`detect()` 直接返回 0.0**：这一屏没有稳定可读的文字（卡名随卡变），留着 OCR 入口只会被「点击继续」骗成 `result`——那正是 21.1 死循环的第 3 步；
+- `act()` 用 `ctx.acted('newcard_continue')` 节流（同款按钮 3s 内不重复点）。
+
+### 21.6 🔴 连带修的死结：`_flag_stuck` 被**自己的防抖**打断
+
+新卡页最阴的地方不是"没指纹"，而是**卡页检测器全程一声不吭**：连着 60s 零动作，`STUCK_AFTER = 20` 的 `[卡页]` 警报**一行都没发**（事后全靠数日志）。
+
+原因：旧版 `_flag_stuck()` 第一句是 `if page is None: 清零`，而 2b 防抖每圈**必然**制造一个 `page = None` 的帧 ——
+`page` 就在 `None` / `result` 之间来回翻，计数每两轮被打断一次，永远到不了 20。**是防抖自己把卡页检测打瞎了。**
+
+现在的算法（`auto_bot.py` 的 `_flag_stuck`）：
+
+| 改动 | 为什么 |
+| --- | --- |
+| 页名 `name = page.name if page is not None else self.cur_page` | None 帧沿用上一帧的页名，不许清零 |
+| 新增 `self._stuck_sig = frame_sig(img)`（复用 §20.3 那把 28x51 灰度缩略尺子） | 「同一页」**且**「同一画面」才算一圈没动。转场白烟 / 激励视频画面每帧在变 → 不会误报；真卡死时画面一动不动 → 一定数得到 20 帧 |
+| 取证帧目录按 `getattr(self, 'dry_run', True)` 分流到 `scratch/reg_stuck/`，日志打**相对路径** | 离线回归绝不污染 `shots_live/`（和 §20.3 `stuck_dir()` 同一条口径，上一轮这条只堵住了 `unknown`，主循环这条路还在往 `shots_live/` 写） |
+
+`test_newcard.py` [6] 段是**行为级复现**（不是文本断言）：三种节奏各喂 24 帧 ——
+同页同画面 → 报 1 次；**None/result 交替（真机节奏）→ 照样报 1 次（旧版 0 次）**；画面每帧在变 → 一次都不报。
+
+### 21.7 回归锁：`test_newcard.py`（6 段）
+
+| 段 | 锁什么 |
+| --- | --- |
+| [1] | 4 帧真机语料 → `newcard` 硬命中（`order` / 1.00 / 非软），且 `result` 指纹在这 4 帧上只中 0.00（防"两张指纹抢同一屏"） |
+| [2] | **与卡无关**：15 点 `y` 最小 856 ≥ 830；全部落在两条带内（白字 y850~880 / 紫底 y905~925）；4 帧逐位相同（色差 0，容差 ±19） |
+| [3] | `act()` 纯点色：新卡帧 → 点 (276,864)；`flow3_r1` / `result_live040817` / `levelup_live073932` → **零点击** |
+| [4] | 真跑 `App.step()`：`page=newcard`、`acted=True`、`ocr_ran=False`、落点离 (276,864) ≤8px（4 帧） |
+| [5] | 全 **828 帧**扫描：命中 `newcard` 的只有 8 个路径 = 4 张不同帧（语料 + 真机原件，按内容去重）；`detect()` 恒 0.0 |
+| [6] | `_flag_stuck` 三种节奏行为级复现（§21.6） |
+
+语料 **256 → 260** 张、全 552x1006 帧 **820 → 828** 张，`check` 未标注仍为「无」，`verify` **260 / 不通过 0**（未全中 → 交 OCR 仍是 61），
+15 个回归脚本全绿，`stuck_*.png` 仍 20 张（取证帧没污染语料）。
+
+### 21.8 真机第 19 轮首命中（2026-09-03 16:33:24 起，`--max-steps 400`，用户在场实测）
+
+开局第 1 帧就是上一轮遗留的那张新卡页 —— 指纹 + 动作**一次即中**，落点和离线预测逐字一致：
+
+```
+16:33:25,416 INFO [指纹] newcard print-order 1.00
+16:33:25,417 INFO [状态] None -> newcard
+16:33:25,418 INFO [新卡] 点色命中[点击继续]白字 (276, 864) -> 点掉它
+16:33:33,548 INFO [指纹] hero_level print-prefer 1.00
+16:33:33,551 INFO [状态] newcard -> hero_level
+```
+
+**第 15 页闭环。** 整轮 20 分 47 秒 / 400 步跑满（`达到目标轮数 400, 结束`），终版统计
+（脚本 `scratch/scripts/live_stat.py 6351`，按本轮起始行偏移切片，免得把上一轮的日志算进来）：
+
+| 指标 | 实测 |
+| --- | --- |
+| 路由 | **380 条，全部点色，真 OCR 0 条** |
+| 命中页 | 10 个：`battle` 332 / `lobby` 15 / `chest_info` 14 / `result` 6 / `matching` 4 / `vip_popup` 3 / `chest_open` 2 / `versus` 2 / `newcard` 1 / `hero_level` 1 |
+| 状态转移 | 47 次，全部落在各页 `next_pages` 声明之内 |
+| 战斗闭环 | **6 场**（`[结算] 点色命中继续按钮 (275, 829) (累计 6 场)`，每场 250~300s） |
+| 徽章出口 | **4 次全中**（`hero_level` 1 + `vip_popup` 3，坐标见 §20.2 新表） |
+| `giveup` / `Traceback` / `ERROR` / `[卡页]` | **0 / 0 / 0 / 0** |
+| WARNING | 20 条，**全部**是「点色零命中 第 1/2 帧」16 条 + 「转场白烟」4 条 —— 那两句「也不花 OCR」是字面意思 |
+| 拉黑 | 16 次（付费宝箱护栏 `chest@220,855 300s` + 战斗格子冷却） |
+| 新增取证帧 | **0**：`shots_live/` 仍 581 张、`shots/stuck_*.png` 仍 20 张、全 552x1006 帧仍 **828**（零 OCR = 一条 `[待标语料]` 都没产生） |
+
+两个顺带被钉死的结论：
+
+- **上一轮那 10 条 `result ocr` 根本不是 `result` 的问题**：本轮结算页 6 次全部 `result print-order 1.00`
+  （0.800 那种「被动画盖住一整个十字」的帧一次没遇到），`newcard` 一标上那 10 条就全消失了 —— 坐实了 §21.1 的误判链。
+- **`_flag_stuck` 改完第一次在真机上有了反证**：本轮 16 条零命中 + 4 条转场，画面签名每帧都在变 → **一次误报都没有**；
+  而旧版在同样节奏的第 18 轮是「真卡死 60s 也一次都不报」。所以本轮 `[卡页] 0` 的含义是「卡过的帧画面都在变（正常转场）」，
+  不是「检测器又哑了」—— 这两件事现在靠 `frame_sig` 分开，见 §21.6。

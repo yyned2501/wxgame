@@ -3,6 +3,7 @@
 from .base import Page, select_page
 from .lobby import LobbyPage
 from .matching import MatchingPage
+from .newcard import NewCardPage
 from .battle import BattlePage
 from .result import ResultPage
 from .ad_popup import AdPopupPage
@@ -26,6 +27,7 @@ ALL_PAGES = [
     DiamondPopupPage(),
     VipPopupPage(),
     ResultPage(),
+    NewCardPage(),     # 结算/升级后弹的新卡页(真机 16:03 卡死 60s 那一张)
     LevelUpPage(),
     BattlePage(),
     MatchingPage(),
