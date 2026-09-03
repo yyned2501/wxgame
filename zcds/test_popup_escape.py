@@ -42,7 +42,7 @@ from pages.base import (NAV_LOBBY_TAB, back_arrow_pos, find_close_badge, guide_t
                         is_transition, nav_present, nav_tab_cx, route_prints)
 from pages.claim_popup import ClaimPopupPage
 from pages.diamond_popup import DiamondPopupPage
-from auto_bot import App
+from auto_bot import App, OCR_ESCALATE_AFTER
 
 FAILED = []
 OCR_CNT = [0]
@@ -195,6 +195,82 @@ for p in sorted(glob.glob(os.path.join(D, 'shots', '**', '*.png'), recursive=Tru
 check(n >= 820 and len(need) <= 3,
       '%d 张帧里点色定不出页、四条零 OCR 出口也全不认的只剩 %d 张: %s'
       % (n, len(need), need))
+
+print('[6] 2026-09-04 R28 血案帧: 开屏[秘境大冒险]活动弹窗(X n=973 被旧上限 950 拒)')
+EVENT = ['shots/other_live_popup_event_004639.png', 'shots/other_live_popup_event_004908.png']
+for rel in EVENT:
+    img = load(rel)
+    check(route_prints(ALL_PAGES, img)[0] is None,
+          '%s 点色定不出页(这类弹窗内容随活动变, 刻意不标指纹)' % rel)
+    bd = find_close_badge(img)
+    check(bd == (477, 311), '  关闭徽章认得出且位置对: %s (修之前这里 None -> 掉全图 OCR)' % (bd,))
+    QUEUE[:] = [img]
+    CLICKS[:] = []
+    app._nohit_streak = 0
+    app._trans_streak = 0
+    app._zerohit_run = 0
+    app._ocr_zero = 0
+    app.cur_page = 'unknown'
+    for attr, val in (('_sig', None), ('_tries', 0)):
+        if hasattr(app.pages[-1], attr):
+            setattr(app.pages[-1], attr, val)
+    out = None
+    for _ in range(3):
+        out = app.step()
+    page, acted, ocr_ran = out
+    check(page is not None and page.name == 'unknown' and not ocr_ran,
+          '  连跑 3 帧仍是 unknown 且全程零 OCR (实测 page=%s ocr=%s)'
+          % (page.name if page else None, ocr_ran))
+    hit = [c for c in CLICKS if abs(c[0] - bd[0]) <= 8 and abs(c[1] - bd[1]) <= 8]
+    check(bool(hit), '  落点打在徽章上: 徽章=%s 实测=%s' % (bd, CLICKS))
+    check(app._ocr_zero < OCR_ESCALATE_AFTER,
+          '  徽章出口本身就在动手, 不该把 OCR 升级计数器推到死路口 (实测 %d)' % app._ocr_zero)
+
+print('[7] battle 页左上那坨红色装饰(60x60 / 72x60 / 60x72)仍然不是关闭徽章')
+BATTLE_FP = ['shots/battle_live040659.png', 'shots_live/dbg_033_battle_040641.png',
+             'shots_live/dbg_063_battle_040814.png', 'shots_live/dbg_053_battle_040743.png']
+for rel in BATTLE_FP:
+    if not os.path.exists(os.path.join(D, rel)):
+        continue                       # shots_live/ 是 gitignore 的真机取证目录, 新克隆没有
+    check(find_close_badge(load(rel)) is None, '  %s -> None' % rel)
+
+print('[8] B 路卡页警报: 带动画的新页面每帧签名都在变, A 路数不到 -> 零命中计数必须补上')
+import logging as _lg
+
+
+class _Catch(_lg.Handler):
+    def __init__(self):
+        _lg.Handler.__init__(self)
+        self.msgs = []
+
+    def emit(self, record):
+        self.msgs.append(record.getMessage())
+
+
+_h = _Catch()
+_lg.getLogger().addHandler(_h)
+_saved = (app.cur_page, app._ad_until, app.unknown_idle)
+app._stuck = 1                 # A 路故意停在 1: 证明下面的警报只可能来自 B 路
+app._stuck_page = None
+app.f = type('F', (), {'img': load(EVENT[0]), 'boxes': [], 'joined': ''})()
+
+
+def _stuck_msgs(z, acted=False, name='versus', ad=0):
+    _h.msgs[:] = []
+    app.cur_page = name
+    app._ad_until = ad
+    app._zerohit_run = z
+    app._flag_stuck(None, acted)
+    return [m for m in _h.msgs if '[卡页]' in m]
+
+
+check(len(_stuck_msgs(12)) == 1, '点色连续 12 帧零命中 + 页名是被误判的 versus(在 STUCK_EXEMPT 里) -> 必须报')
+check(_stuck_msgs(11) == [], '11 帧(还没到阈值) -> 不报')
+check(_stuck_msgs(12, acted=True) == [], '这帧真动了手 -> 不报')
+check(_stuck_msgs(12, ad=1) == [], '看广告窗口整段豁免 -> 不报')
+check(_stuck_msgs(0) == [], '零命中计数为 0 -> 不报')
+app.cur_page, app._ad_until, app.unknown_idle = _saved
+_lg.getLogger().removeHandler(_h)
 
 print()
 print('全程 OCR 实际跑了 %d 次' % OCR_CNT[0])

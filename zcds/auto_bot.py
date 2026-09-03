@@ -53,6 +53,15 @@ BLANK_AD_AFTER = 2
 #   并 WARNING。battle/matching/versus/unknown/ad_popup 是合法的"等着不动手"页, 不计。
 STUCK_AFTER = 20                 # 约 60s(每轮 poll ~3s)
 STUCK_EXEMPT = ('battle', 'matching', 'versus', 'unknown', 'ad_popup')
+# B 路卡页计数(2026-09-04 真机第 28 轮补): 点色全表连续这么多帧零命中 -> 报警。
+#   这条不看画面签名(带动画的新弹窗每帧都在变, A 路永远数不到), 也不看页名
+#   (那张[秘境大冒险]被 OCR 误判成 versus, 而 versus 正好在 STUCK_EXEMPT 里 -> A 路直接豁免),
+#   只认"这一屏我们压根认不出来"这一件事。实测每轮 1~7s -> 十几帧就是 30~80s。
+STUCK_ZEROHIT_AFTER = 12
+STUCK_ZEROHIT_EVERY = 30         # 首次报警之后每多 30 帧复报一次(不必每帧都丢一张取证帧)
+# 点色零命中后走全图 OCR 兜底, 连着这么多帧"OCR 认出了页却一次手都动不了" ->
+# 这条路已经证明是死的: 不再花 675ms OCR, 直接交 unknown 走它的出口升级表。
+OCR_ESCALATE_AFTER = 3
 
 
 def setup_logging():
@@ -100,6 +109,8 @@ class App:
         self._stuck_page = None          # 卡页统计: 上一轮的页名
         self._stuck_sig = None           # 卡页统计: 上一轮的画面签名(28x51 灰度缩略)
         self._stuck = 0                  # 卡页统计: 该页连续零动作轮数
+        self._zerohit_run = 0            # 卡页统计 B 路: 点色全表连续零命中帧数(不看签名)
+        self._ocr_zero = 0               # 连续"OCR 认出页但动不了手"的帧数(到 3 帧就改走 unknown)
         # 看广告窗口(2026-09-03 12:47 定案): _ad_until 非 0 = 窗口开着, 主循环交 _ad_tick 管
         self._ad_t0 = 0.0                # 本轮广告开始时刻
         self._ad_until = 0.0             # 窗口硬上限时刻(= 开始 + AD_WATCH_TOTAL)
@@ -450,6 +461,11 @@ class App:
         现在: None 帧沿用上一帧的页名继续算, 但**画面签名 frame_sig 一变就重新计数** ——
         转场白烟/激励视频每帧都在变 -> 不会误报; 真卡死时画面一动不动 -> 一定数得到 20 帧。
         看广告窗口(_ad_until)整段豁免: 那本来就是我们故意不动手。
+        B 路(2026-09-04 R28 补): 开屏那张[秘境大冒险]活动弹窗有动画 -> 每帧 frame_sig 都在变,
+          A 路被动画一路打断; 而且它被全图 OCR 误判成 versus, versus 又在 STUCK_EXEMPT 里 ->
+          A 路连页名这一关都过不去。结果 4 分钟零动作、零警报(事后全靠数日志才发现)。
+          现在再数一条"点色全表连续 N 帧零命中": 认不出来这么多帧, 这件事本身就是要报警的事实,
+          不需要先知道这是哪一页。仍然只报警 + 存帧, 一个点都不替页面点。
         """
         name = page.name if page is not None else self.cur_page
         img = getattr(self.f, 'img', None)
@@ -457,8 +473,11 @@ class App:
         same = bool(name) and name == self._stuck_page and sig == self._stuck_sig
         self._stuck_page, self._stuck_sig = name, sig
         self._stuck = self._stuck + 1 if same else 1
-        if (acted or self._ad_until or not name or name in STUCK_EXEMPT
-                or self._stuck != STUCK_AFTER):
+        z = self._zerohit_run
+        hit_static = name not in STUCK_EXEMPT and self._stuck == STUCK_AFTER
+        hit_zerohit = (z >= STUCK_ZEROHIT_AFTER
+                       and (z == STUCK_ZEROHIT_AFTER or z % STUCK_ZEROHIT_EVERY == 0))
+        if acted or self._ad_until or not name or not (hit_static or hit_zerohit):
             return
         if img is None:
             return
@@ -467,11 +486,12 @@ class App:
         d = STUCK_DIR_OFFLINE if getattr(self, 'dry_run', True) else os.path.join(ROOT, 'shots_live')
         os.makedirs(d, exist_ok=True)
         fn = 'stuck_%s_%s.png' % (name, time.strftime('%H%M%S'))
+        why = ('点色连续 %d 帧零命中' % z) if hit_zerohit else ('同页连续 %d 轮零动作' % self._stuck)
         try:
             img.save(os.path.join(d, fn))
-            logging.warning('[卡页] %s 连续 %d 轮零动作 -> 存帧 %s '
+            logging.warning('[卡页] %s %s -> 存帧 %s '
                             '(多半是撞上新页面没标指纹, 或按钮位置/颜色变了)',
-                            name, self._stuck, os.path.relpath(os.path.join(d, fn), ROOT))
+                            name, why, os.path.relpath(os.path.join(d, fn), ROOT))
         except Exception as e:
             logging.warning('[卡页] 存帧失败: %s', e)
 
@@ -489,6 +509,7 @@ class App:
                 self._soft_page, self._soft_streak = None, 0
                 self._trans_streak = 0
                 self._nohit_streak = 0
+                self._zerohit_run = 0        # 广告窗口整段是我们的故意等待, 同样不计
                 return None, r == 'acted', False
             # 'done'/'giveup' -> 窗口已关, 同一帧继续往下走正常路由(少白等一轮)
         # 1) 定页只看点色指纹: 实测 2ms 判完全表, 同样的轮次跑全图 OCR 要 675ms
@@ -502,6 +523,7 @@ class App:
             trans, why = is_transition(img)
             if trans:
                 self._trans_streak += 1
+                self._zerohit_run = 0        # 转场帧认不出是应该的, 不计进 B 路
                 self.f = ScreenFeature(img=img, boxes=[], joined='')
                 self._soft_page, self._soft_streak = None, 0
                 if self.shots:
@@ -529,6 +551,7 @@ class App:
             # 2b) 点色连"差一个点"的软命中都没有 -> 要么真是没标指纹的页, 要么只是动画盖住了指纹点。
             #     先白等一帧(零成本): 动画帧下一帧必然恢复全中, 真页面才会连着两帧都不中, 那时才花全图 OCR。
             self._nohit_streak += 1
+            self._zerohit_run += 1           # B 路: 不是转场却仍然点色零命中
             if self._nohit_streak < NO_HIT_OCR_AFTER:
                 self.f = ScreenFeature(img=img, boxes=[], joined='')
                 self._soft_page, self._soft_streak = None, 0
@@ -573,19 +596,34 @@ class App:
                     logging.warning(f'[侧页] 点色零命中但认出{what} -> 交 unknown, 不花 OCR')
                     page, score, src = self.pages[-1], 1.0, 'escape-' + tag
             else:
-                # 2c) 连着两帧都没有任何指纹(新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR
-                self._nohit_streak = 0
-                self.f, ocr_ran = self.vision.ocr(img, force=True)
-                self._text_done = True
-                page, score = detect_ocr(self.pages, self.f)
-                src = 'ocr' if page.name != self.pages[-1].name else 'unknown'
-                if src == 'ocr':
-                    self._save_ocr_shot(page.name, img)   # 白捡一条待标语料
-                self.print_confirmed = False
-                self._soft_page, self._soft_streak = None, 0
+                # 2c) 连着两帧都没有任何指纹(新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR。
+                #     但真机第 28 轮证明这条兜底自己也会死循环: 开屏那张[秘境大冒险]弹窗点色
+                #     整表不中, 又被 OCR 误判成 versus(act 永远 return False) -> 每 2 帧白烧一次
+                #     675ms OCR、4 分钟零动作。连着 OCR_ESCALATE_AFTER 帧这样就说明这条路是死的:
+                #     不再花 OCR, 直接交 unknown 走它的出口升级表(引导/徽章/箭头/页签 ->
+                #     遮罩试探 -> 睡 45s), 至少日志看得见它在干什么, CPU 也不再烧在读字上。
+                if self._ocr_zero >= OCR_ESCALATE_AFTER:
+                    self._nohit_streak = NO_HIT_OCR_AFTER - 1   # 停在已升级水位, 每帧都能出手
+                    self.f = ScreenFeature(img=img, boxes=[], joined='')
+                    ocr_ran = False
+                    self._soft_page, self._soft_streak = None, 0
+                    logging.warning(f'[兜底] OCR 连续 {self._ocr_zero} 帧认出页面却零动作'
+                                    f' -> 本轮不花全图 OCR, 交 unknown 走出口升级表')
+                    page, score, src = self.pages[-1], 1.0, 'escape-ocrzero'
+                else:
+                    self._nohit_streak = 0
+                    self.f, ocr_ran = self.vision.ocr(img, force=True)
+                    self._text_done = True
+                    page, score = detect_ocr(self.pages, self.f)
+                    src = 'ocr' if page.name != self.pages[-1].name else 'unknown'
+                    if src == 'ocr':
+                        self._save_ocr_shot(page.name, img)   # 白捡一条待标语料
+                    self.print_confirmed = False
+                    self._soft_page, self._soft_streak = None, 0
         else:
             self._trans_streak = 0
             self._nohit_streak = 0
+            self._zerohit_run = 0            # 点色认出来了 -> B 路归零
             self.print_confirmed = True
             src = 'print-' + src
             if not soft:
@@ -634,6 +672,12 @@ class App:
         # 点色定完页、该读的字已经备好 -> 同一轮就能出手。
         # 旧版进页第一轮只补特征不动作(_skip_act), 每换一页白扔一轮, 已删除。
         acted = page.act(self)
+        # "OCR 认出了页却动不了手" 的连续帧数: 只要这帧真动了手、或者是点色认出来的正常页
+        # 就清零(那说明游戏状态在往前走); 只有 src=ocr 且零动作才累加。
+        if acted or src.startswith('print'):
+            self._ocr_zero = 0
+        elif src == 'ocr':
+            self._ocr_zero += 1
         if acted and page.next_pages and page.name != 'battle':
             self.expected = set(page.next_pages)
         elif not acted and page.name not in ('battle', 'matching', 'unknown'):
