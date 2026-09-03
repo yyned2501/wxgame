@@ -6,7 +6,7 @@
   2) 先开 50 的矿, 再开 50 的兵营, 再考虑 25 的, 都没有就开 100 的
   3) 第一名点过就换第二名(不是整轮不动手); 拉黑只保持 CELL_RETRY 秒
 """
-import logging, time
+import logging, time, collections
 
 try:
     from ..battle_scan import scan_battle_cells
@@ -25,6 +25,28 @@ CELL_RETRY = 25.0
 # 用户指定顺序: 50矿 > 50兵营 > 50问号 > 25 > 100 > 250 > 认不出价钱的
 # (旧版是 "矿 > 50 > 2d > 25", 而 2d 这个桶几乎装下了所有格子 -> 真机上等于只按 y 点, 25 先被点光)
 PRICE_TIER = {25: 3, 100: 4, 250: 5}
+
+TIER_NAMES = ['50矿', '50兵', '50问', '25', '100', '250', '分不清']
+TIER_NAME = {i: n for i, n in enumerate(TIER_NAMES)}
+
+
+def cell_key(c):
+    """格子的冷却 key = 标签中心按 16px 取整(镜头平移后同一格会算成新 key, 这是故意的)"""
+    return ((c['x'] + c['w'] // 2) // 16, (c['y'] + c['h'] // 2) // 16)
+
+
+def tier_census(clickable, clicked):
+    """本帧白色格子的档位盘点, 直接拼进日志, 给真机复盘用。
+
+    为什么需要: 用户最初的诉求是「战斗中只会开 25 的」, 但旧日志只报**点中的那一个**,
+    事后没法回答「点 25 的时候棋盘上还有没有没点过的 50」—— 只能靠「跳过已点 N 格」猜。
+    现在一行同时给出 `在架`(本帧全部白色格子) / `可点`(扣掉冷却中的) / 分档计数,
+    只统计**还能点**的档, 因为冷却里的格子本来就不该再点一次。
+    """
+    free = [c for c in clickable if cell_key(c) not in clicked]
+    cnt = collections.Counter(TIER_NAMES[rank_cell(c)[0]] for c in free)
+    parts = ' '.join('%s:%d' % (n, cnt[n]) for n in TIER_NAMES if n in cnt)
+    return '在架%d 可点%d%s' % (len(clickable), len(free), ' ' + parts if parts else '')
 
 
 def rank_cell(c):
@@ -110,10 +132,12 @@ class BattlePage(Page):
         skipped = 0
         for c in clickable:
             cx, cy = c['x'] + c['w'] // 2, c['y'] + c['h'] // 2
-            key = (cx // 16, cy // 16)
+            key = cell_key(c)
             if key in ctx.clicked_cells:
                 skipped += 1
                 continue
+            # 盘点要在写冷却表**之前**算, 这样「可点」里含本帧要点的那一格
+            census = tier_census(clickable, ctx.clicked_cells)
             ctx.clicked_cells[key] = now
             ctx.last_cell = now
             extra = ''
@@ -122,7 +146,7 @@ class BattlePage(Page):
             if expired:
                 extra += ' 解禁%d格' % len(expired)
             logging.info(f'[战斗] 点格子 ({cx},{cy}) {c["icon"]} cls={c["cls"]} '
-                         f'clip={c["clip"]}{extra}')
+                         f'clip={c["clip"]}{extra} | {census}')
             ctx.click(cx, cy)
             return True
         logging.debug('[战斗] 全部白色格子都在冷却中')

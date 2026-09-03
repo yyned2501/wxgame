@@ -65,7 +65,7 @@ class App:
     """主循环 + 页面执行上下文(ctx)"""
 
     def __init__(self, max_battles=0, dry_run=False, low_cpu=True, affinity_cores=0,
-                 resize=True, max_steps=0, shots=0):
+                 resize=True, max_steps=0, shots=0, ad_probe=0):
         self.max_battles = max_battles
         self.dry_run = dry_run
         self.low_cpu = low_cpu
@@ -73,6 +73,8 @@ class App:
         self.resize = resize             # 每轮把窗口钉回指纹基准尺寸
         self.max_steps = max_steps   # >0: 跑满 N 轮退出(dry-run 冒烟用)
         self.shots = shots      # >0: 每轮存帧 -> shots_live/dbg_*.png (取证用)
+        self.ad_probe = ad_probe   # >0: 结算页没认到黄色[领取]时存帧 -> scratch/adprobe/ (排查广告额度用)
+        self._adprobe_n = 0
         self.steps = 0
         self._win_warn = 0
         self.hwnd = None
@@ -387,6 +389,27 @@ class App:
         except Exception as e:
             logging.warning('[存帧] 失败: %s', e)
 
+    def ad_probe_shot(self, img, why=''):
+        """--ad-probe N: 结算页**没**认到黄色[领取]时存一帧, 用来回答"广告额度用完没"。
+
+        为什么不直接塞 shots_live/: 用户明确要过"临时帧别污染 shots_live/", 而这个探针
+        只在排查广告问题时开(平时一轮一帧都不写)。第 19/20 轮 400 步各 6 场战斗,
+        [领取] 一次都没命中 —— 到底是"每日 8 次额度在 13:33 就用完了"(日志最后一次命中
+        13:32:58), 还是"横幅在但点色判据漏了", 光看日志分不出来, 得肉眼看过那一帧。
+        """
+        if not self.ad_probe or self._adprobe_n >= self.ad_probe:
+            return
+        d = os.path.join(ROOT, 'scratch', 'adprobe')
+        os.makedirs(d, exist_ok=True)
+        self._adprobe_n += 1
+        fn = os.path.join(d, 'noclaim_{0:03d}_{1}_{2}.png'.format(
+            self._adprobe_n, why or '?', time.strftime('%H%M%S')))
+        try:
+            img.save(fn)
+            logging.info('[广告探针] 本帧没有黄色[领取] -> 存帧 %s', fn)
+        except Exception as e:
+            logging.warning('[广告探针] 存帧失败: %s', e)
+
     # ---- OCR 兜底 = 白捡一条"待标语料"(2026-09-03 加) --------------------------
     # 真机长测里剩下的 OCR 路由只有 result / vip_popup 两页(它们有种没进语料的版式),
     # 但 --shots 0 时这些帧一帧都不落盘 -> 下次还是没语料标, 永远补不上。
@@ -655,6 +678,8 @@ def main():
     ap.add_argument('--max-steps', type=int, default=0, help='最多跑 N 轮后退出, 0=不限 (dry-run 冒烟用)')
     ap.add_argument('--dry-run', action='store_true', help='只打印行为不真点')
     ap.add_argument('--shots', type=int, default=0, help='每轮存帧到 shots_live/dbg_*.png, 存 N 帧(取证用)')
+    ap.add_argument('--ad-probe', type=int, default=0,
+                    help='结算页没认到黄色[领取]时存帧到 scratch/adprobe/, 存 N 帧(0=关)')
     ap.add_argument('--no-low-cpu', action='store_true', help='不降低微信进程优先级')
     ap.add_argument('--affinity', type=int, default=0, help='微信进程限 N 个CPU核(0=不限)')
     ap.add_argument('--no-resize', action='store_true',
@@ -665,7 +690,8 @@ def main():
     try:
         App(a.max_battles, a.dry_run, low_cpu=not a.no_low_cpu,
             affinity_cores=a.affinity, resize=not a.no_resize,
-            max_steps=a.max_steps, shots=a.shots).run()
+            max_steps=a.max_steps, shots=a.shots,
+            ad_probe=a.ad_probe).run()
     except Exception as e:
         logging.exception('启动失败: %s', e)
     # 双击 exe/pyw 运行时要停住让人看日志; 但管道/自动化下 stdin 可能仍是控制台,

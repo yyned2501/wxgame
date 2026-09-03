@@ -156,5 +156,54 @@ try:
 finally:
     B.scan_battle_cells = orig_scan
 
+print('\n[8] 档位盘点 tier_census(): 把「点 25 的时候还有没有没点过的 50」写进日志')
+from pages.battle import tier_census, cell_key, TIER_NAMES
+
+board8 = [cell(50, 'ore', x=100, y=700), cell(50, 'barracks', x=200, y=700),
+          cell(50, 'unknown', x=300, y=700), cell(25, 'unknown', x=100, y=760),
+          cell(100, 'barracks', x=200, y=760), cell(250, 'barracks', x=300, y=760)]
+c0 = tier_census(board8, set())
+check(c0 == '\u5728\u67b66 \u53ef\u70b96 50\u77ff:1 50\u5175:1 50\u95ee:1 25:1 100:1 250:1',
+      '全部未点 -> %s' % c0)
+# 把三个 50 塞进冷却表(键算法必须和 act() 用的是同一个 cell_key)
+busy = {cell_key(c) for c in board8 if c['cls'] == 50}
+c1 = tier_census(board8, busy)
+check(c1 == '\u5728\u67b66 \u53ef\u70b93 25:1 100:1 250:1', '50 全在冷却 -> %s' % c1)
+# 注意不能直接判 "'50' not in": 250 里就含一个 50
+check(not any(('%s:' % k) in c1 for k in ('50\u77ff', '50\u5175', '50\u95ee')),
+      '50 \u4e09\u6863\u5168\u90e8\u6d88\u5931 = \u8fd9\u884c\u80fd\u8bc1\u660e\"\u70b9 25 \u65f6\u786e\u5b9e\u6ca1\u6709\u672a\u70b9\u7684 50\": %s' % c1)
+check(tier_census([], set()) == '\u5728\u67b60 \u53ef\u70b90', '\u7a7a\u68cb\u76d8\u4e0d\u70b8: %r' % tier_census([], set()))
+check(TIER_NAMES[rank_cell(cell(50, 'unknown'))[0]] == '50\u95ee'
+      and TIER_NAMES[rank_cell(cell(30, 'unknown'))[0]] == '\u5206\u4e0d\u6e05',
+      'TIER_NAMES 和 rank_cell 的档位编号对齐')
+
+import logging
+
+recs = []
+
+
+class _Cap(logging.Handler):
+    def emit(self, r):
+        recs.append(r.getMessage())
+
+
+_lg = logging.getLogger()
+_old_lvl = _lg.level
+_lg.setLevel(logging.DEBUG)
+_cap = _Cap()
+_saved = _lg.handlers[:]   # 摘掉根 logger 原有 handler, 别让这条日志同时泄到 stderr
+_lg.handlers = [_cap]
+B.scan_battle_cells = lambda img, *a, **k: [dict(c) for c in board8]
+try:
+    ctx8 = FakeCtx(img)
+    BattlePage().act(ctx8)
+finally:
+    B.scan_battle_cells = orig_scan
+    _lg.handlers = _saved
+    _lg.setLevel(_old_lvl)
+line8 = [r for r in recs if '\u70b9\u683c\u5b50' in r]
+check(len(line8) == 1 and '| \u5728\u67b66 \u53ef\u70b96 50\u77ff:1' in line8[0],
+      'act() 日志尾巴带盘点: %s' % (line8[0][-70:] if line8 else '<无>'))
+
 print('\nSUMMARY failures = %d  (耗时 %.1fs)' % (len(FAILS), time.time() - T0))
 sys.exit(1 if FAILS else 0)
