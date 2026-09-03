@@ -27,18 +27,18 @@ python auto_bot.py                          # 需要游戏窗口已经打开
 | `--no-resize` | 不钉窗口尺寸（指纹会整片失效，一般别关） |
 | `--no-low-cpu` / `--affinity N` | CPU 降载开关（把微信进程设低优先级 / 限核） |
 
-## 离线验证（不用开游戏，只读 `shots/` 里已导出的 260 张标定语料 + 真机取证帧）
+## 离线验证（不用开游戏，只读 `shots/` 里已导出的 261 张标定语料 + 真机取证帧）
 
-> **`shots/` 语料不入 git**（260 张 / 105.7 MB，截图顶部带账号昵称）。
+> **`shots/` 语料不入 git**（261 张 / 106.1 MB，截图顶部带账号昵称）。
 > 所以 clone 之后本节命令会因为找不到语料而报错：需要在游戏里自己采集截图，
 > 在 `tools/pick_print.py` 的 `LABELS` 里登记后 `pick --label` 采指纹。定页逻辑本身不受影响。
 
 ```
-python -X utf8 test_print_route.py            # 10 项断言 / 260 张语料：路由回归([9]=宝箱码表 [10]=软命中门限)
-python -X utf8 test_zero_ocr.py               # 定页面零 OCR: 260 语料 + 留出帧共 566 帧(306 留出) 全要点色定页, 且 OCR 模块没被 import
+python -X utf8 test_print_route.py            # 10 项断言 / 261 张语料：路由回归([9]=宝箱码表 [10]=软命中门限)
+python -X utf8 test_zero_ocr.py               # 定页面零 OCR: 261 语料 + 留出帧共 567 帧(306 留出) 全要点色定页, 且 OCR 模块没被 import
 python -X utf8 test_price_guard.py            # 绝不替玩家点付费按钮: 18 张真机帧回放(帧表派生自 LABELS) + 合成帧 + 带内宝石判据
 python -X utf8 tools\pick_print.py check      # 语料与 LABELS 是否对得上
-python -X utf8 tools\pick_print.py verify     # 点色指纹逐张判定，应 260/260 通过（61 张按设计无指纹：other/arena/压暗引导帧/stuck 取证帧）
+python -X utf8 tools\pick_print.py verify     # 点色指纹逐张判定，应 261/261 通过（61 张按设计无指纹：other/arena/压暗引导帧/stuck 取证帧）
 python -X utf8 tools\print_stats.py --dry-run # 重算各页指纹统计，应与注释逐字一致
 python -X utf8 test_cpu_offline.py            # 主循环离线集成 8 场景（需要 rapidocr）：25 帧只花 1 次 OCR（只剩"连着两帧零命中"那条兜底）
 python -X utf8 test_act_zero_ocr.py           # 动作层零 OCR：result/chest_open/lobby/chest_info/levelup/hero_level 六页逐帧落点表，一调 OCR 当场炸
@@ -50,17 +50,17 @@ python -X utf8 test_battle_rank.py             # 战斗出手次序：同一帧�
 python -X utf8 test_anchor_print.py            # 锚点相对点色回归：弹窗面板会浮动 -> 5 段断言（锚点组 / 异页 0.00 / 查找 6ms）
 python -X utf8 test_ad_escape.py               # 广告页自救：黑屏连续 2 帧 -> arm 看广告窗口(一帧都不点), 放完才点色找右上[关闭]，全程零 OCR
 python -X utf8 test_ad_watch.py                # 看广告自动领奖：黄色[领取]判据(17 正/218 反) + 药丸两把尺子(右边界缩窄/白像素变少) + 顶栏门闩 + _ad_tick 状态机 + step() 端到端零 OCR
-python -X utf8 test_newcard.py               # 新卡展示页(第 15 页)：4 帧硬命中 + 与卡无关性(15 点逐位色差 0) + 异页零点击 + step() 真跑 + 828 帧只有这 4 张命中 + 卡页检测器翻帧盲区复现
-python -X utf8 test_popup_escape.py            # 弹窗出口回归：5 段 —— 徽章帧四判据交叉 / 真跑 step() 零 OCR 点到徽章 / claim_popup 徽章优先 / diamond_popup 认不出什么都不点 / 828 帧里"谁都不认"<=3
+python -X utf8 test_newcard.py               # 新卡展示页(第 15 页)：4 帧硬命中 + 与卡无关性(15 点逐位色差 0) + 异页零点击 + step() 真跑 + 830 帧只有这 4 张命中 + 卡页检测器翻帧盲区复现
+python -X utf8 test_popup_escape.py            # 弹窗出口回归：5 段 —— 徽章帧四判据交叉 / 真跑 step() 零 OCR 点到徽章 / claim_popup 徽章优先 / diamond_popup 认不出什么都不点 / 830 帧里"谁都不认"<=3
 ```
 
-## 当前进度（2026-09-03 深夜复验：离线 **16 个回归脚本全绿** + 真机第 21/22 轮 **56 + 232 条路由 = 100% 点色、真 OCR 0 条**，
-**大厅宝箱 [点击解锁] 已拆成「免费 `U`」/「要宝石 `p`」并真机点中免费解锁**（第 20 轮 12 次白跑 -> 第 22 轮 **0 次白跑 / 0 次拉黑**，见 §23））
+## 当前进度（2026-09-03 晚复验：离线 **16 个回归脚本全绿** + 真机第 24 轮 **400 步 / 382 条路由 / 点色 99.5% / 真 OCR 1 条且已清零**，
+**全项目现在一条 OCR 路由都不剩**（最后那条是 `result` 指纹压在 MVP 角色动画上，见 §24）；大厅宝箱已拆成「免费 `U`」/「要宝石 `p`」并真机点中免费解锁）
 
 | 层 | 状态 | 证据 |
 |---|---|---|
 | 抓窗 + 后台点击 | 通 | `game_utils.py` 纯 ctypes（PrintWindow / PostMessage），不需要 pywin32；真机 31 ms/帧 |
-| 点色指纹定页面 | **11/16 页**（另 1 页 `tab_other` **刻意不标**，见下） | `pick_print.py verify` 通过 **260 / 不通过 0**（**61 张**按设计无指纹：`other` 37（含 14 张 `stuck_*` 取证帧）+ `arena` 13 + 压暗引导帧 `lobby_dim` 11，它们改由**引导落点 / 弹窗关闭徽章 / 兄弟页签 / 侧页箭头 / 转场闸门**五条点色出口零 OCR 处理）；`test_zero_ocr.py` 在 566 帧上量出**需要 OCR 兜底的帧 = 0**；全 828 帧对账里四条出口**都不认**的只剩 **3 张**（`COLORPRINT.md` §20.4）；`test_print_route.py` 10 项断言全过 |
+| 点色指纹定页面 | **11/16 页**（另 1 页 `tab_other` **刻意不标**，见下） | `pick_print.py verify` 通过 **261 / 不通过 0**（**61 张**按设计无指纹：`other` 37（含 14 张 `stuck_*` 取证帧）+ `arena` 13 + 压暗引导帧 `lobby_dim` 11，它们改由**引导落点 / 弹窗关闭徽章 / 兄弟页签 / 侧页箭头 / 转场闸门**五条点色出口零 OCR 处理）；`test_zero_ocr.py` 在 566 帧上量出**需要 OCR 兜底的帧 = 0**；全 828 帧对账里四条出口**都不认**的只剩 **3 张**（`COLORPRINT.md` §20.4）；`test_print_route.py` 10 项断言全过 |
 | 页面动作 `act()` | 15/15 页都有 | `ad_popup` / `claim_popup` / `diamond_popup` **判页**仍靠 OCR 关键词（没语料标不了），但**动作层已经零 OCR**：两页的默认出口都换成点色 `find_close_badge()`（§20），`diamond_popup` 旧版那句"认不出就盲点 (270,300) 遮罩"已删（认不出就什么都不点）；**放完广告的整黑尾帧**连 OCR 关键词都没了，由点色几何出口 `ad_close_pos()` 处理（§18，真机 12:31 实证已能自救）；**看广告期间广告页根本不需要定页**：一旦 arm 看广告窗口，主循环跳过路由，只在窗口里判"放完了"再点[关闭]（§19） |
 | 动作层点色（零 OCR） | 9 页已切换 | `lobby` / `result` / `chest_open` / `chest_info` / `levelup` / `hero_level` / **`newcard`** / `tab_other`（+ 本来就是纯点色的 `battle`）整轮不跑 OCR；`test_act_zero_ocr.py` 逐帧落点锁死，判据表见 `COLORPRINT.md` §13；`lobby` 宝箱槽现为**五态码** `o`/`U`/`p`/`a`/`.`，可点集 = `o`+`U`，`p`（解锁要宝石）由卡片右上角红角标判出（§23） |
 | 战斗自动化 | 通 | 价签点色分类（`cls` 25/50/100/250/3）+ 档位优先级 `rank_cell()`：**50矿 > 50兵营 > 50问号 > 25 > 100 > 250 > 认不出**；`CELL_COOLDOWN = 2.5s` 单格冷却、`CELL_RETRY = 25s` 拉黑，`act()` 遍历候选点第一个没被拉黑的（旧版只看 `clickable[0]`，第一名点过就整轮不动手 -> 真机连续 95s 一次没点）。`test_battle_loop.py` 连跑 3 场 OCR = 0，`test_price_class.py` / `test_battle_rank.py` 锁死；**新增 `tier_census()`：每行点格子日志尾巴给出 `在架N 可点M 50矿:1 50兵:2 25:1`，真机第 20 轮 289 次点格子**档位违规 0**（§22.1 / §22.2）** |
@@ -69,6 +69,36 @@ python -X utf8 test_popup_escape.py            # 弹窗出口回归：5 段 —�
 | 不花钱护栏 | 通 | `test_price_guard.py` 39 项；主判据是**按钮内下半那条带里的紫宝石像素数**（纯点色，免费 0 / 付费 362，阈值 `GEM_MIN = 60`），OCR 只有否决权、永远不能放行点；18 张真机帧的回放表**派生自 `LABELS`**（文件名带 `paid` 即付费帧），多采一轮真机不会让回归假失败 |
 | 零 OCR 逃逸出口（引导 / **徽章** / 页签 / 箭头） | 通 | `step()` 的判据链 `guide_targets()` -> **`find_close_badge()`** -> `nav_present()`+`nav_tab_cx()` -> `back_arrow_pos()`：谁都不认才允许花一次全图 OCR。兄弟页签一律点中间[战斗] `(276,950)` 回大厅；**模态弹窗**直接点右上角红底白叉（落点现算，**七个不同高度 172/197/224/235/361~370/461/545**，x 也在 452~471 之间飘）。`test_side_page_escape.py` 6 场景 + `test_popup_escape.py` 5 段全程 OCR = 0；徽章那条**真机 15:52:57 首次自动命中 (452,361)**：`unknown escape-badge 1.00` + `点候选 1/4` 一次即中，8s 后回大厅；**第 19 轮 400 步又命中 4 次**（`hero_level` (469,172) + `vip_popup` (455,461)/(459,545)/(452,370)，全部第 1 候选即中、每次 3s 内回大厅，见 §21.8）。`COLORPRINT.md` §16 / §20 |
 | 激励视频自动领奖 | 通 | 结算页黄色[领取]（`ad_claim_pos()` 纯点色，和[立即开箱]同一个黄、靠外接框形状分开）-> **看广告窗口**（期间不定页 / 零 OCR / 一帧都不点）-> 左上状态药丸**相对缩窄**判放完 -> 点[关闭] -> `done` 当帧交回路由点[继续]计一场。真机 300 步里连跑 4 次闭环（33/33/36/33 秒），全程 0 次 OCR；两次广告之间至少隔 `CLAIM_GAP = 120s`。`test_ad_watch.py` 4 段锁死，判据见 `COLORPRINT.md` §19；**「13:33 之后 0 次命中」已定案 = 每日 8 次额度用完**（横幅右下角本来就写「可用 N/8」，13:32:58 那帧是 1/8；`--ad-probe` 存的探针帧整带 0 个黄像素；全语料 38 张命中帧 = 33 失败 + 5 胜利 ⇒ 两种礼包共用同一颗黄色药丸），**判据不动**，见 §22.3 |
+
+### 2026-09-03（晚）真机第 24 轮 400 步：唯一那条 OCR 路由 = `result` 指纹站在**角色动画**上（已清零）
+
+用户「游戏开着，你继续跑就是了」——本轮 `auto_bot.py --max-steps 400` 全程无人干预，20:11:46 → 20:32:37。
+
+| 项 | 实测 |
+|---|---|
+| 定页次数 / 点色占比 | **382 条路由 / 99.5% 点色**（352 print-order + 27 print-prefer + 1 print-anchor） |
+| 真 OCR | **1 条** —— `20:14:49 [指纹] result ocr 0.95`，**就是本轮修掉的那条** |
+| 页命中 | `battle` 345 / `lobby` 10 / `result` 8 / `matching` 5 / `chest_open` 4 / `vip_popup` 3 / `versus` 3 / `levelup` 1 / `hero_level` 1 / `chest_info` 1 |
+| 场次 | **8 场**（累计计数与日志一致） |
+| 异常 | `Traceback` **0** / `ERROR` **0** / 拉黑 **0** / 白跑 **0** |
+| 转场 | `[兜底] 点色零命中` **14 次，全部是"第 1/2 帧"**（没有一次到第 2 帧 = 没有一处真卡死）+ `[转场] 白烟帧` 4 次 |
+| 新增取证帧 | **1 张**（那张 OCR 帧，已登记成语料） |
+
+- **战斗档位优先级按用户定案生效**（50矿 > 50兵营 > 50问号 > 25 > 100），8 场共开 **251 格**，日志逐格带盘点。
+  按 `cls` 分：**50 → 137 次**（矿 25 / 兵营 84 / 认不出图标 15 / 空 13）、**25 → 96 次**、**100 → 18 次**（全是兵营）。
+  开头就是铁证：`在架6 可点6 50矿:1 50兵:1 25:4` → **点的是 (283,700) 那个 50 矿**，不是 4 个 25；
+  下一帧矿没了 `50兵:2 25:4` → 改点 50 兵。**先 50 矿、再 50 兵、才轮到 25**，正是用户要的次序（旧版"只开 25 就不开"没再出现）。
+  🔴 注：日志第 3 列是 **icon**（图标分类器）而不是价钱，`unknown`/`None` 是它认不出图标的两种置信度，档位一律看 `cls`。
+- **本轮修的这一条不是判据坏，是点站错了地方**：`result` 指纹 25 点里缺的 2 点全在十字单元 **(386~390, 144~148)**，
+  那正是 MVP 页上方**会换的 3D 获胜角色 + 闪光特效**：23 帧语料里 13 帧是同一个骷髅，另外 9 帧已经偏到 `492D31`，全靠 `tolerance(85)=19` 盖着；真机这帧是红龙 + 一颗大闪光正好压在采样点上。
+  unit0 换到 (26,192) `0x2D1613` 王座厅纯背景（**跨 23 帧逐通道偏差从 22 降到 3**），留出集 **54 帧全中**、异页 238 帧**零误中**、margin 持平 0.24。
+- **语料 260 → 261**（新帧登记为 `shots/result_live201449.png`）、`result` 分组 22 → **23**、
+  `verify` **通过 261 / 不通过 0**（未全中交 OCR 仍是 61，一张没变差）、`test_zero_ocr` **567 帧 / 需要 OCR 兜底的指纹页帧 0**。
+- **动作层本来就是对的**：那帧没有礼包横幅，亮紫[继续]在 (275, 829)，正是 §22.4 的"无横幅版式"。已补进 `test_act_zero_ocr` 码表。
+- 🔴 **刻意没有用 `pick --label result` 重标**：新帧进来后 23 帧被"角色长相"拆成 **8 个形态**（多数只剩 1 帧），
+  照抄 `prints=(...)` 等于把噪声写进指纹。正确做法是**保留稳定单元、只替换失效的那一个**。
+- 完整选点口径（为什么必须限定 `y>=140`、为什么不能用"单单元判别力"当筛子）与安全区实测见 `COLORPRINT.md` **§24**。
+
 
 ### 2026-09-03（晚）宝箱[点击解锁]拆成 **免费 `U` / 要宝石 `p`** —— 判据是卡片右上角那颗红角标（真机第 21 轮）
 
@@ -128,7 +158,7 @@ python -X utf8 test_popup_escape.py            # 弹窗出口回归：5 段 —�
   `act()` 用 `color_button` 现量白字中心 (276,864)，`CONTINUE_MIN_PX = 400`（实测新卡 938 / 真结算 187 / 6）。
 - 🔴 **标定域必须钉死在底部 176 行**：全域标定挑出来的点含 (168,476)、(256,524)，正压在 `[远程][机械]` 兵种徽章
   和卡名「弩炮」笔画上 —— **换一张卡整片失效**。两条看着最像"新卡专属"的判据实测都不够格当**身份**：
-  顶部黄字带 `n>=120` 的帧全语料有 **101 张**（新卡自己只排第 13），底部白字带 `n>0` 的有 **429/828 张**。
+  顶部黄字带 `n>=120` 的帧全语料有 **101 张**（新卡自己只排第 13），底部白字带 `n>0` 的有 **429/830 张**。
 - **`detect()` 恒返回 0.0**：这屏没有稳定可读的文字，留 OCR 入口只会被「点击继续」骗成 `result`（就是上面死循环的第 3 步）。
 - 🔴 **连带修掉一个真正的瞎点**：卡页检测器**连着 60s 零动作一次 `[卡页]` 警报都没发**。根因是 `_flag_stuck()` 旧版第一句
   `page is None 就清零`，而 2b 防抖每圈必然制造一个 `None` 帧 —— **是防抖自己把卡页检测打瞎了**。
@@ -430,6 +460,11 @@ chest_info(带内宝石 362 -> 付费) -> [拉黑] chest@all 300s -> [主页] �
    广告页的出口也已经换成点色几何判据（`ad_close_pos()` / `ad_pill_right()`）；
    `ad_popup` 的 OCR 关键词现在只剩「窗口外撞见野生广告页」和「认挽留框里的[继续观看]」两处用得到。
    ~~注：`chest_info` 动作层仍要 ROI OCR 认价格文字~~ **已于 2026-09-03 凌晨解决**：面板价格不看文字，只看按钮内下半那条带的紫宝石像素数（纯点色），`chest_info` 也声明了 `act_needs_ocr = False`（见 `COLORPRINT.md` §12）。
+   🔴 **`config.WATCH_ADS = True` 只管结算页那颗黄色[领取]**（`pages/result.py` 是全项目唯一读它的地方）。
+   大厅 `a` 格 [[AD]-30分钟加速] 与 `chest_info` 的 [AD] 入口**仍然一律不点** —— 不是忘了改：点下去之后是什么
+   面板从来没采集过（19:11 那批黑帧只证明了"会进广告"），而广告额度一天只有 8 次，白试一次就烧掉一次。
+   **明天额度重置后的第一件事**：单发探针只点一次 `a` 格，把「面板 -> 广告 -> 回到游戏」整条链的帧抓下来
+   （顺手第一次真机验证 §22 药丸尺子和 §18 黑屏出口），有证据再接进 `lobby.act()`。**别照着开关名把 `a` 直接放开。**
 3. **单帧形态没有跨帧验证**：`matching` 全部、`result` 第 4 形态、`vip_popup` 的 `vip_month`
    （详见 `COLORPRINT.md` §9-1），补图优先级 `sm_after` / `st_2`。
 4. **`battle` 真机形态只补到 6 帧**（`shots/battle_live_*`）。换对手昵称/换矿型仍可能出现第三形态；
@@ -497,11 +532,11 @@ chest_info(带内宝石 362 -> 付费) -> [拉黑] chest@all 300s -> [主页] �
 | `pages/base.py` | `Page` 基类 + `match_print()`（**四级路由**：绝对全中 -> 锚点相对点色 -> 软命中 -> 全图 OCR）/ `detect_ocr()` / `route()` / `route_prints()`，以及按颜色判据 `find_close_badge()` / `is_back_arrow()` / `is_countdown()` / `is_transition()`（认转场的白烟/黑屏帧，整帧跳过不花 OCR）/ `ad_close_pos()`（黑屏赖着不走时的广告页[关闭]）/ `ad_claim_pos()`（结算页黄色[领取] = 看广告）/ `ad_pill_right()`（广告状态药丸右边界，判"放完了没有"）/ `nav_present()` / `guide_targets()` |
 | `pages/*.py` | 16 个页面：11 个已标指纹（lobby/battle/result/chest_info/chest_open/vip_popup/matching/versus/**levelup**/**hero_level**/**newcard**），3 个只走 OCR 判页（ad_popup/claim_popup/diamond_popup；广告页那张"放完的整黑尾帧"由 `ad_close_pos()` 出口处理，而且**看广告期间主循环由 §19 窗口接管、根本不定页**，`ad_popup.act()` 现在的职责是「弹挽留框时点[继续观看]」），`unknown` 兜底，**`tab_other` 刻意不标指纹**（兄弟页签只能靠"导航栏在不在 + 亮的是哪个"定身份，§16）；**15 个页**（除 `ad_popup` 外全部）声明 `act_needs_ocr = False`，动作层也只数颜色 |
 | `pages/unknown.py` | 兜底页：候选出口按「引导落点 -> **弹窗关闭徽章** -> 青色返回箭头 -> 导航栏兄弟页签 -> 弹窗遮罩」排队；`stuck_dir(ctx)` 决定取证帧写哪 —— **真机写 `shots/`，离线回归写 `scratch/reg_stuck/`**（不再污染语料）；同帧最多点 `MAX_TRY = 5` 次，画面签名零变化就 `_give_up()` 存帧 + 睡 45s |
-| `test_*.py` | 离线回归（**16 个全绿**）：`test_print_route`(10 项/260 语料) `test_zero_ocr`(定页零 OCR) `test_act_zero_ocr`(动作层零 OCR + 逐帧落点表) `test_cpu_offline`(主循环 8 场景) `test_battle_loop`(连打 3 场) `test_price_guard`(39 项不花钱护栏) `test_chest_livelock`(开箱死循环) **`test_side_page_escape`(引导模态/兄弟页签逃逸 6 场景，全程零 OCR)** **`test_price_class`(战斗价签分类)** **`test_battle_rank`(档位出手次序+不停手)** **`test_anchor_print`(锚点相对点色)** **`test_ad_escape`(广告页自救)** **`test_ad_watch`(看广告自动领奖 4 段：[领取]判据 / 药丸两把尺子+门闩 / 状态机 / 端到端零 OCR)** **`test_popup_escape`(弹窗关闭徽章出口 5 段：四判据交叉 / step() 真跑零 OCR / claim·diamond 出口 / 828 帧"谁都不认"<=3)**
-**`test_newcard`(新卡展示页 6 段：真机 4 帧硬命中 / 15 点逐位色差 0 / 异页零点击 / step() 端到端零 OCR / 828 帧唯一命中 / `_flag_stuck` 盲区复现)**
+| `test_*.py` | 离线回归（**16 个全绿**）：`test_print_route`(10 项/261 语料) `test_zero_ocr`(定页零 OCR) `test_act_zero_ocr`(动作层零 OCR + 逐帧落点表) `test_cpu_offline`(主循环 8 场景) `test_battle_loop`(连打 3 场) `test_price_guard`(39 项不花钱护栏) `test_chest_livelock`(开箱死循环) **`test_side_page_escape`(引导模态/兄弟页签逃逸 6 场景，全程零 OCR)** **`test_price_class`(战斗价签分类)** **`test_battle_rank`(档位出手次序+不停手)** **`test_anchor_print`(锚点相对点色)** **`test_ad_escape`(广告页自救)** **`test_ad_watch`(看广告自动领奖 4 段：[领取]判据 / 药丸两把尺子+门闩 / 状态机 / 端到端零 OCR)** **`test_popup_escape`(弹窗关闭徽章出口 5 段：四判据交叉 / step() 真跑零 OCR / claim·diamond 出口 / 828 帧"谁都不认"<=3)**
+**`test_newcard`(新卡展示页 6 段：真机 4 帧硬命中 / 15 点逐位色差 0 / 异页零点击 / step() 端到端零 OCR / 830 帧唯一命中 / `_flag_stuck` 盲区复现)**
  **`test_chest_unlock`(宝箱五档码表 5 段：596 观测角标两簇零骑墙 / 码表自洽 / 43 张面板配对零反例 / p 格一律不点的行为 / 真机帧双向锁)** |
 | `battle_scan.py` | 战斗回合的颜色扫描（避免整帧 OCR，省 CPU）。`battle_templates.npz` 是旧模板匹配遗留，**现在没有任何代码引用**，可删可进 gitignore |
-| `shots/` | **260 张**标定语料（552x1006，含 2026-09-02/03 真机帧），`tools/pick_print.py` 的 `LABELS` 引用它（**不入库**）；真机取证帧已全部登记（14 张 `stuck_*` 归 `other`），`check` 已归零 |
+| `shots/` | **261 张**标定语料（552x1006，含 2026-09-02/03 真机帧），`tools/pick_print.py` 的 `LABELS` 引用它（**不入库**）；真机取证帧已全部登记（14 张 `stuck_*` 归 `other`），`check` 已归零 |
 | `shots_live/` | 真机跑起来的取证帧（`peek_*` 只读探针 / `dbg_*` 主循环 `--shots`），**不入库** |
 | `tools/` | `pick_print.py`(check/pick/verify) `print_stats.py` `set_low_cpu.ps1` + 逆向工具（il2cppdumper、wxapkg） |
 | `capture/ dec/ game_src/ unity_data/` | 逆向资料：抓包、XYX 解密产物、wasm 解包、Unity 资源（**运行时不依赖，不入库**） |

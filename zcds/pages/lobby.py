@@ -23,7 +23,9 @@ CHEST_BAND = (695, 790)
 # 阈值取法: 黄 >=500 才算有金按钮(实测 789 vs 0); 左半黄 >=250 判[开启](实测 380 vs 123);
 #   白 >=120 判[点击解锁](实测 143~176, 而[开启]/[[AD]]按钮自带的白描边只有 70~100, 120 留安全边际)。
 # 票券图标色 AAE4FF/6FC2F2/223F6B 与金色不搭, 所以只数金色就能把[开启]和[[AD]]分开。
-# 注意 [[AD]] 那一格点下去 = 看激励视频加速, WATCH_ADS=False 时一律不点。
+# 注意 [[AD]] 那一格点下去 = 看激励视频给这一格减 30 分钟冷却。config.WATCH_ADS 现在已是 True,
+# 但**这一格仍然刻意不点**: 点下去之后的面板从未采集过(19:11 那批黑帧只证明了"会进广告"),
+# 而广告额度一天只有 8 次 —— 接之前必须先单发探针取证(见 README 待办 2 末尾)。
 CHEST_BTN_COLOR = 0xFDCA33
 CHEST_WHITE = 0xFFFFFF
 CHEST_BTN_BAND = (838, 882)     # 按钮行 y 范围(标题行在 y810..826, 不许混进来)
@@ -145,10 +147,12 @@ class LobbyPage(Page):
                 out.append('.')
         return ''.join(out)
 
-    def _ready_chests(self, img):
+    def _ready_chests(self, img, st=None):
         """可点的宝箱槽位(左->右): 只有 o=[开启] 和 U=[点击解锁]带红角标 才是免费动作。
-        p(解锁要宝石) / a([[AD]加速, 点它=看视频) / .(空槽) 一律不点。判据见 chest_states()"""
-        st = self.chest_states(img)
+        p(解锁要宝石) / a([[AD]加速, 点它=看视频) / .(空槽) 一律不点。判据见 chest_states()
+        st 传现成的状态码就不重复量像素(chest_states 每帧要 8~12 次 color_pixels, act 里别量两遍)"""
+        if st is None:
+            st = self.chest_states(img)
         return [slot for slot, code in zip(CHEST_SLOTS, st) if code in 'oU']
 
     # 轮换游标(真机教训: 旧版死点 ready[0], 那一格若点了没跳转就永远卡在同一坐标)
@@ -161,7 +165,7 @@ class LobbyPage(Page):
         #    再叠一层拉黑: 面板判出"这格要花钱"后 CHEST_PAID_BLOCK 秒内不再点它
         #    (真机 03:54: 那一格颜色不变 -> 大厅反复点 -> 反复关面板, 6 秒一圈刷了 16 次)
         st = self.chest_states(img)
-        ready = self._ready_chests(img)
+        ready = self._ready_chests(img, st)
         # CHEST_BLOCK_ALL = 面板判过付费但说不清是哪一格(用户手动开的面板) -> 整行先别碰
         openable = ([] if ctx.is_blocked(CHEST_BLOCK_ALL)
                     else [s for s in ready if not ctx.is_blocked(chest_slot_key(s))])

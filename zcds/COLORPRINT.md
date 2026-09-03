@@ -210,7 +210,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 而**不是** `LABELS['ad_popup']`：广告 chrome 是白字黑底，标绝对指纹极易在别的黑底页上误中。
 它的出口改用**几何点色**判据 `ad_close_pos()`，见 §18。
 
-## 7. 当前标定状态（语料 260 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 傍晚实测）
+## 7. 当前标定状态（语料 261 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 傍晚实测）
 
 | 页面 | 形态数 | 判色点/形态 | 单元/形态 | 语料全中 | 异页误中 | margin | 各形态覆盖帧数 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -253,7 +253,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 > 而 4 张兄弟页签帧（`shots/other_live10100*`）就是这条的考官：同一条导航栏、高亮板在别的格子上，
 > 中间这格必须是普通底色，指纹不许中（§16.2/§16.3）。
 
-语料分组：`battle` 70 / `lobby` 50 / `result` 22 / `other` 37（含 §18 那张放完的广告页 + §7 末注的 14 张 `stuck_*` 取证帧）/ `chest_info` 18（含 6 张 `stuck_01*`）/ `arena` 13 / `lobby_dim` 11 / `chest_open` 8 / `vip_popup` 8（另 `vip_month` 2 张归并进它的第二形态）/ `hero_level` 5 / `matching` 4 / `versus` 4 / `levelup` 4 / `newcard` 4 = **260**。
+语料分组：`battle` 70 / `lobby` 50 / `result` 23 / `other` 37（含 §18 那张放完的广告页 + §7 末注的 14 张 `stuck_*` 取证帧）/ `chest_info` 18（含 6 张 `stuck_01*`）/ `arena` 13 / `lobby_dim` 11 / `chest_open` 8 / `vip_popup` 8（另 `vip_month` 2 张归并进它的第二形态）/ `hero_level` 5 / `matching` 4 / `versus` 4 / `levelup` 4 / `newcard` 4 = **261**。
 图名一律对应 `shots\<图名>.png`，各页 `# 形态: …` 注释里列的名字同理。
 带 `_live` 的真机帧由 `tools/pick_print.py` 的自动登记块并入 `LABELS`，不用手改。
 `shots/stuck_*.png`（主循环卡页时自己存的取证帧）也由同一个脚本自动并入 **`other`**，
@@ -390,12 +390,12 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `C:\projects\wxgame\zcds\pages\*.py` | 各页面的指纹（§7）与 `act()` 动作层点色（§12/§13）；声明 `act_needs_ocr = False` 的页整轮不读字 |
 | `C:\projects\wxgame\zcds\tools\pick_print.py` | 标定工具：`check` / `pick` / `verify` |
 | `C:\projects\wxgame\zcds\tools\print_stats.py` | 重算并写回各页指纹的统计注释（`--dry-run` 只看表） |
-| `C:\projects\wxgame\zcds\shots\` | 260 张标定语料（552x1006，含 2026-09-02/03 真机帧 + 主循环自存的 `stuck_*` 取证帧），`LABELS` 以 `shots/<图名>` 引用 |
+| `C:\projects\wxgame\zcds\shots\` | 261 张标定语料（552x1006，含 2026-09-02/03 真机帧 + 主循环自存的 `stuck_*` 取证帧），`LABELS` 以 `shots/<图名>` 引用 |
 | `C:\projects\wxgame\zcds\shots_live\` | 真机取证帧：`peek_*` = 只读探针，`dbg_*` = 主循环 `--shots N`，`probe_*` = 定点探针（**不入库**） |
 | `C:\projects\wxgame\zcds\scratch\` | 一次性逆向脚本与中间产物（**运行时不依赖**，见 `scratch\README.txt`）；`live_probe2.py` / `scale_experiment.py` / `live_stability.py` / `live_collect.py` 是真机取证脚本 |
 | `C:\projects\wxgame\zcds\scratch\scripts\test_chest_paid.py` | 真机帧离线回放：主循环同款 ROI(0.10~0.90) + scale 0.5 跑 11 帧，免费帧必点、付费帧必拒 |
-| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，**260 张**语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限；`CONTEXT_PAGES = ('tab_other',)` 放行"刻意不标指纹"的页） |
-| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：260 语料 + 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
+| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，**261 张**语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限；`CONTEXT_PAGES = ('tab_other',)` 放行"刻意不标指纹"的页） |
+| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：261 语料 + 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
 | `C:\projects\wxgame\zcds\test_cpu_offline.py` | 主循环离线集成（8 个场景，**25 帧只花 1 次 OCR**）：[6] = 点色零命中要连着两帧才肯兜底，[7] = 软命中稳帧放行，[8] = 付费宝箱格拉黑后不再回头点 |
 | `C:\projects\wxgame\zcds\test_battle_loop.py` | 战斗循环回归：进场帧清空 `clicked_cells` 并当场出手，整轮零 OCR |
 | `C:\projects\wxgame\zcds\test_act_zero_ocr.py` | **动作层零 OCR**：`result` / `chest_open` / `lobby` / `chest_info` / `levelup` / `hero_level` 六页逐帧落点表 + 45 帧**反向互斥**（同色黄按钮、同款红徽章在别的页帧上一次都不许出手），桩里把 OCR 入口全改成抛异常（§13） |
@@ -405,9 +405,9 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `C:\projects\wxgame\zcds\test_anchor_print.py` | **锚点相对点色回归**（5 段）：锚点组命中 / 异页 0.00 / 偏移不串台 / 查找 6ms / 真机帧回放（§6.2） |
 | `C:\projects\wxgame\zcds\test_ad_escape.py` | **广告页自救回归**：判据本身（含 6 张正常页零误命中）+ "认出广告页 -> **arm 看广告窗口，但一帧都不点**" + 伪造 `_ad_t0 = time.time()-20` 喂真帧验证"等满才点[关闭]、离开广告页才 `done`" + 全程零 OCR（§18/§19） |
 | `C:\projects\wxgame\zcds\test_ad_watch.py` | **看广告自动领奖回归**（4 段）：① `ad_claim_pos` 判据（17 张结算帧正例 / 218 帧反例，含同色的[立即开箱]）② 药丸右边界读数与「相对缩窄」分界 ③ `_ad_tick` 状态机（等满 / 超时撒手 / 压根没进广告三分支，用 `FakeTime` 顶掉 `auto_bot.time`）④ `step()` 端到端：窗口期间路由表与 OCR 一次都不许被调用 |
-| `C:\projects\wxgame\zcds\test_popup_escape.py` | **弹窗关闭徽章出口回归**（5 段）：徽章帧四判据交叉、`unknown` 落点带 `BADGE_OFFSETS`、`claim_popup`/`diamond_popup` 零 OCR、`diamond_popup` 绝不盲点、828 帧对账里"谁都不认"只剩 3 张（§20） |
+| `C:\projects\wxgame\zcds\test_popup_escape.py` | **弹窗关闭徽章出口回归**（5 段）：徽章帧四判据交叉、`unknown` 落点带 `BADGE_OFFSETS`、`claim_popup`/`diamond_popup` 零 OCR、`diamond_popup` 绝不盲点、830 帧对账里"谁都不认"只剩 3 张（§20） |
 | `C:\projects\wxgame\zcds\pages\newcard.py` | **第 15 页 `newcard`**（新卡展示页）：15 点指纹只取底部两条带（§21.4）、`detect()` **恒返回 0.0**（不给 OCR 抢身份的机会）、`act()` 用 `color_button` 现量白字中心（§21.5） |
-| `C:\projects\wxgame\zcds\test_newcard.py` | **新卡页回归**（6 段）：真机 4 帧硬命中 + 与卡无关性（15 点逐位色差 0）+ 异页零点击 + 真跑 `step()` + 全 828 帧只有这 4 张命中 + `_flag_stuck` 行为级复现（§21.7） |
+| `C:\projects\wxgame\zcds\test_newcard.py` | **新卡页回归**（6 段）：真机 4 帧硬命中 + 与卡无关性（15 点逐位色差 0）+ 异页零点击 + 真跑 `step()` + 全 830 帧只有这 4 张命中 + `_flag_stuck` 行为级复现（§21.7） |
 | `C:\projects\wxgame\zcds\test_side_page_escape.py` | **侧页逃逸回归**（6 场景，**全程 OCR = 0 次**）：引导模态判定与落点、兄弟页签实测点 `(276,950)`、有箭头无栏的侧页零 OCR、卡牌页箭头误命中但路由先认栏、导航栏语料分界、unknown 同帧点击次数上限（§16） |
 | `C:\projects\wxgame\zcds\scratch\scripts\audit_holdout.py` | 留出集审计：`shots_live/` 里没进过语料的帧逐张定点色 + 判定，统计真要兜底的帧数 |
 | `C:\projects\wxgame\zcds\test_price_guard.py` | 价格护栏回归（39 项）：18 张真机帧回放（**帧表派生自 `LABELS`**，文件名带 `paid` 即付费帧）+ 合成文本框 + 合成图像，全程不依赖 OCR |
@@ -1442,3 +1442,94 @@ CONTINUE_BOX = (150, 840, 420, 890)     CONTINUE_COLOR = 0xFFFFFF     CONTINUE_M
 自检方法很简单：`act()` 在那几帧上**一个点都不发**（连玩家对战金按钮都找不到），正常大厅不可能这样。
 上表所有统计与 `test_chest_unlock.py` 都过 `is_lobby()`（552x1006 + 玩家对战金按钮命中）这道闸；
 **凡新写逐槽判据的探针，务必带上定页断言。**
+
+
+---
+
+## 24. 动画精灵上的判色点 = 定时炸弹（`result` 指纹 unit0 / 真机第 24 轮 20:14 唯一那条 OCR）
+
+第 24 轮 400 步跑完，全项目**只有一条**路由退化成了 OCR：
+
+```
+2026-09-03 20:14:49,800 INFO [指纹] result ocr 0.95
+2026-09-03 20:14:49,800 INFO [待标语料] result 是靠 OCR 认出来的 -> 存帧 shots_live/ocr_result_201449.png
+```
+
+而这一帧的指纹分是 **0.92 = 23/25**：缺的 2 点全在同一个十字单元 **(386~390, 144~148)**。
+软命中（§6.1）本来允许"差 1 点"，这里差 2 点，于是老老实实退回 OCR。**判据没坏，是那个点站错了地方。**
+
+### 24.1 根因：MVP 页上方的 3D 获胜角色是会换的
+
+把两个单元各裁 24x24 放大 3 倍并排看（人眼核对），再量**单像素跨 23 帧逐通道偏差**（脚本 `scratch/scripts/result_dev2.py`）：
+
+| 单元中心 | 跨 23 帧逐通道偏差 | 采到的颜色范围 | 说明 |
+| --- | --- | --- | --- |
+| **(388, 146)** 原 unit0 | **22（最脏）** | `492D24` ~ `573D3A` | 13 帧是灰白骷髅 `573324`、另外 9 帧已经是别的角色 `492D31` —— 靠 `tolerance(85)=19` 勉强盖住；真机那帧是**红龙 + 一颗大闪光 ✨ 正好压在采样点上**，直接掉出容差 |
+| (76, 162) | 19 | `2E1B2A` ~ `412734` | 王座厅背景，本来就在容差边缘 |
+| (472, 158) | 18 | `301C2A` ~ `422632` | 同上 |
+| (500, 242) | 19 | `291926` ~ `3C2328` | 同上 |
+| (44, 242) | 18 | `291826` ~ `3B2227` | 同上 |
+| **(26, 192)** 新 unit0 | **3** | `2D1310` ~ `2D1613` | 纯背景，比四个老单元干净一个数量级 |
+
+结算页上半屏是"**获胜英雄站在王座前**"的 3D 角色 + 光效，角色随英雄、随皮肤、随是否 MVP 变，
+闪光特效还会逐帧动。当年 `pick --label result` 自动标定把 unit0 放在这里，只是因为
+**13 张语料恰好是同一个骷髅角色**（剩下 9 张已经是别的颜色，靠 `tolerance(85)=19` 才没散架）—— 典型的"语料不够花就不稳"。
+
+> 同一类坑在项目里已经踩过三次：`lobby` 旧指纹 15 点全在**顶栏**（§13）、`battle` 旧指纹全在
+> **y58~114 的动画带**（§16）、这次 `result` 的**角色精灵**。共同点都是"标定时全中，因为语料刚好一样"。
+
+### 24.2 选点扫描口径（脚本 `scratch/scripts/result_unit0_scan{,2,3}.py` / `result_unit0_pick.py`）
+
+两个一开始就跑出错误答案的坑，先记下来：
+
+1. **top 候选全落在 y=70~102 的顶栏**（账号金币/钻石那排数字）。语料里所有帧顶栏一模一样 →
+   跨帧偏差 0、看起来"完美稳定"。这是 §13 明令禁止的铁律，必须**限定 y>=140**。
+2. **拿"单个单元不许命中异页"当筛子是错的**。现存 4 个单元单独搬到别的页上也常常 5/5 命中，
+   区分度从来来自 **25 点的整条组合**。所以误中/margin 只能对整条指纹算。
+
+最终口径（四条同时成立）：
+
+| 条件 | 值 | 为什么 |
+| --- | --- | --- |
+| 跨 23 帧逐通道最大偏差 `dev` | **<= 12** | `degree=85` 的容差是 `tolerance(85)=19`，留 7 的余量给没见过的角色/光效 |
+| 整条 25 点在 23 帧 result 语料上 | **全中** | `is_multi_color` |
+| 异页误中 | **238 帧 0 次** | 整条（不是单点） |
+| 留出集 | **54 帧全中**（`shots/` + `shots_live/` 里现有 result 指纹 score >= 0.7 的全部帧） | 单帧语料不够，用留出集补置信度 |
+
+满足四条的是 **126 个候选**，而它们在留出集上**全部 54/54**（区分不开），所以实际排序依据是跨帧 `dev`：
+
+| 候选 | chroma | 跨 23 帧逐通道 `dev` | 判定 |
+| --- | --- | --- | --- |
+| **(26, 192) `0x2D1613`** | 26 | **3** | ✅ **采用** —— `dev` 最小的一个，`tolerance(85)=19` 下还剩 16 的余量 |
+| (442, 376) | 38 | 5 | 备选（chroma 更高，`dev` 大一档） |
+| (34, 196) / (514, 140) | 32 / 22 | 5 | 备选 |
+| (438, 376) / (438, 380) | **40** / 37 | 8 | 备选（chroma 最高的一档，但 `dev` 也更大） |
+| ~~(470, 216)~~ | — | **84**（`281117` ~ `786534`） | ❌ **被 `dev <= 12` 当场淘汰** —— 它压在角色脚下的光效上，单看 chroma 很漂亮，跨帧能翻 3 倍。**这就是"只按 chroma 选点会选错"的现成反例** |
+
+安全区实测结论（王座厅背景，以后要补点直接用）：126 个候选全部落在
+**`x < 80` 或 `x > 400` 的 `y 140~250` 两角** 和 **`y 330~390` 两条横带** 上；中间 `x 100~400 / y 140~330`
+那一大块是角色 + 光效 + 奖励图标区，**一个候选都没有** —— 和 §24.1 的根因完全吻合。
+
+### 24.3 改完的账
+
+| 项 | 结果 |
+| --- | --- |
+| `result` 语料 | 22 → **23**（新登记 `shots/result_live201449.png`，`<label>_live<HHMMSS>` 自动并入 `LABELS`） |
+| 语料总数 | 260 → **261**；`check` 未标注「无」 |
+| `verify` | **通过 261 / 不通过 0**（未全中 → 交 OCR 仍是 61，一张没变差） |
+| 23 帧 result | **23/23 全中**；异页 238 帧**零误中**，最高只中 6/25（margin 0.24） |
+| 动作层 | 新帧 `ad_claim_pos` = None（那帧没有礼包横幅）、亮紫[继续] **(275, 829)** —— 正是 §22.4 说的"无横幅版式 830"，落点层本来就没坏，已补进 `test_act_zero_ocr` 码表 |
+| `test_zero_ocr` | 567 帧（261 语料 + 306 留出）**需要 OCR 兜底的指纹页帧 0**，平均 3.5 ms/帧 |
+| 回归 | **16 个脚本全 `exit=0`** |
+
+🔴 **没有采用 `pick --label result` 重标**：新帧登记进来之后，23 帧被"角色长什么样"拆成了 **8 个形态**，
+多数形态只剩 1 帧（§21.4 那套自动分形态在这里只会教我把噪声写进 `prints=(...)`）。
+正确做法是**保留 4 个稳定单元、只替换失效的那一个**。
+
+### 24.4 一条通用规矩（往后所有标定都适用）
+
+**标指纹之前先问：这个像素在"同一页的不同时刻"会不会自己变？**
+
+- 会变的三类：顶栏账号数字 / 动画带（角色、光效、飘字、进度条） / 任何带计时的倒计时器
+- 判据：候选点在**该 label 的全部语料**上逐通道偏差 <= 12，且 y >= 140，且落在上面 §24.2 的安全区里
+- 单帧形态多的页（`result` / `versus` / `battle`）永远要用**留出集**复核，不能只看语料全中
