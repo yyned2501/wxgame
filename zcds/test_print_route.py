@@ -209,8 +209,12 @@ def main():
 
     # 真值来源: 2026-09-03 逐槽用 OCR 读出按钮文字再人工订正, 与点色判据 132 个观测全部对上
     # (复核脚本 scratch/scripts/slot_truth2.py, 明细 scratch/o_truth2.txt; 改阈值后重跑它即回归)
-    #   o=[开启]倒计时结束免费领  u=[点击解锁]槽上有宝箱点它免费  .=空槽位(按钮行没东西)
-    #   a=[[AD]-30分钟]冷却中 —— 点它=看激励视频, WATCH_ADS=False 时绝不点
+    #   o=[开启]倒计时结束免费领  U=[点击解锁]且卡片右上角有红感叹号(点它免费解锁)
+    #   p=[点击解锁]但没有红角标 —— 面板只会是[开启 💎120], 点它=白跑一趟, 一律不点
+    #   .=空槽位(按钮行没东西)  a=[[AD]-30分钟]冷却中 —— 点它=看激励视频, WATCH_ADS=False 时绝不点
+    # 2026-09-03 19:2x: 旧码表的 u 全拆成 U/p。角标判据实测(回归脚本 test_chest_unlock.py):
+    #   149 帧大厅 x 4 槽 = 596 个观测, 角标像素只有 0 和 120~128 两簇, 中间值 0 个;
+    #   chest_info 面板帧按时间戳配对复核 43 次(免费 9 / 付费 34), 零反例。见 pages/lobby.py CHEST_BADGE_*
     # 已核对过的 OCR 误读(点色判据比它准): live_lobby 槽4 / guide_live2 槽1(开启读成"开")
     #   / lobby_cooling_2335 / lobby_mixed_0019 / lobby_live010807 槽1(-30分钟读成"-30分神")
     EXPECT = {
@@ -220,30 +224,30 @@ def main():
         'flow_1_after_pvp_click': '....', 'probe_flag2': '....', 'screen_current': '....',
         'step0_main': '....', 'step1_battle_entry': '....', 'view1': '....',
         'lobby_live014209': '....',
-        'flow4_s1_after_continue': 'u...', 'flow4_s2_later': 'u...',   # 与 lobby_clean 槽1 同帧(yb=0 w=392)=点击解锁
+        'flow4_s1_after_continue': 'U...', 'flow4_s2_later': 'U...',   # 与 lobby_clean 槽1 同帧(yb=0 w=392)=点击解锁+红角标=免费
         'live_20260902_a': 'o...', 'live_20260902_b': 'o...', 'live_20260902_c': 'o...',
         'live_20260902_d': 'o...', 'lobby_chest_ready_2355': 'o...', 'lobby_live013938': 'o...',
         'lobby_live014158': 'o...',                      # 槽1[开启]满金, 槽2-4 空槽位
-        'live_lobby': 'uuua', 'live_now2': 'uuuo', 'lobby_clean': 'uuuu',
-        'guide_live2': 'ouuu', 'lobby_cooling_2335': 'a...', 'lobby_live010807': 'a...',
-        'lobby_mixed_0019': 'au..', 'lobby_live004222': '.u..', 'lobby_live010733': 'uo..',
-        'lobby_live035055': 'ou..',                      # 槽1[开启] + 槽2[点击解锁](15分) 同时存在
+        'live_lobby': 'pppa', 'live_now2': 'UUUo', 'lobby_clean': 'UUUU',
+        'guide_live2': 'oUUU', 'lobby_cooling_2335': 'a...', 'lobby_live010807': 'a...',
+        'lobby_mixed_0019': 'ap..', 'lobby_live004222': '.U..', 'lobby_live010733': 'Uo..',
+        'lobby_live035055': 'oU..',                      # 槽1[开启] + 槽2[点击解锁](15分) 同时存在
         # 下面 15 帧是同一段真机 burst(按钮行逐帧有动画), 人工核对: 解锁/解锁/开启/解锁
-        'lobby_live100100': 'uuou',
-        'lobby_live100200': 'uuou',
-        'lobby_live100201': 'uuou',
-        'lobby_live100202': 'uuou',
-        'lobby_live100203': 'uuou',
-        'lobby_live100204': 'uuou',
-        'lobby_live100205': 'uuou',
-        'lobby_live100206': 'uuou',
-        'lobby_live100207': 'uuou',
-        'lobby_live100208': 'uuou',
-        'lobby_live100209': 'uuou',
-        'lobby_live100210': 'uuou',
-        'lobby_live100211': 'uuou',
-        'lobby_live100212': 'uuou',
-        'lobby_live100213': 'uuou',
+        'lobby_live100100': 'UUoU',
+        'lobby_live100200': 'UUoU',
+        'lobby_live100201': 'UUoU',
+        'lobby_live100202': 'UUoU',
+        'lobby_live100203': 'UUoU',
+        'lobby_live100204': 'UUoU',
+        'lobby_live100205': 'UUoU',
+        'lobby_live100206': 'UUoU',
+        'lobby_live100207': 'UUoU',
+        'lobby_live100208': 'UUoU',
+        'lobby_live100209': 'UUoU',
+        'lobby_live100210': 'UUoU',
+        'lobby_live100211': 'UUoU',
+        'lobby_live100212': 'UUoU',
+        'lobby_live100213': 'UUoU',
     }
     lp = LobbyPage()
     n_chk = 0
@@ -263,7 +267,7 @@ def main():
         # 可点槽位必须恰好是码里 o/u 那几格: 少了=漏领(23:55 真机就是这样永远不开箱),
         # 多了=把冷却中的 [[AD]] 格点成了看广告
         ready = lp._ready_chests(img)
-        exp = [SLOTS[i] for i, ch in enumerate(want) if ch in 'ou']
+        exp = [SLOTS[i] for i, ch in enumerate(want) if ch in 'oU']
         check(ready == exp, '%s 可点槽位 %s != %s' % (base, ready, exp))
         # [玩家对战]按钮: 外接框中心恒为 (180,675)(取样框 2026-09-03 收紧过, 见 pages/lobby.py PVP_BOX)
         pos = color_button(img, PVP_BOX, PVP_COLOR, PVP_MIN_PX)

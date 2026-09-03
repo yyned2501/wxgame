@@ -16,7 +16,7 @@ CHEST_BAND = (695, 790)
 # 四张宝箱卡片的操作按钮长得几乎一样, 但颜色构成完全不同, 数颜色比读字稳得多:
 #   [开启]    = 整块纯金, 左边没东西挡   -> 按钮框黄 1235~1241, 左半黄 380~400
 #   [[AD]加速] = 金按钮左边贴了张蓝票券图标 -> 按钮框黄  789~818, 左半黄只剩 123~133
-#   [点击解锁] = 深色底白字(点它[免费]开箱) -> 按钮框黄 0, 白 143~176
+#   [点击解锁] = 深色底白字               -> 按钮框黄 0, 白 143~176
 #   空槽位     = 那一行没有按钮            -> 全 0
 # 上面是 33 帧 lobby 语料 x 4 槽 = 132 个观测的实测区间, 逐帧与 OCR 真值核对过
 # (复核脚本 scratch/scripts/slot_truth2.py, 输出 scratch/o_truth2.txt; 改阈值后重跑它即回归)。
@@ -31,6 +31,33 @@ CHEST_BTN_HALF = 45             # 卡片宽 ~111, 半宽 45 足够且不串邻�
 CHEST_YELLOW_MIN = 500
 CHEST_OPEN_LEFT_MIN = 250
 CHEST_UNLOCK_WHITE_MIN = 120
+# ---- 卡片右上角的红色感叹号徽章 = "这一格现在能白嫖" (2026-09-03 晚真机第 21 轮定案) ----
+# 坑(真机第 20 轮 12 次白跑): 卡片底部白字[点击解锁]其实对应**两种面板** ——
+#   免费 [解锁 🕐50分] = 往这一格放一个宝箱并启动 50 分钟倒计时;
+#   付费 [开启 💎120]  = 花 120 紫宝石立刻开。
+# 两种卡片长得一模一样(同一张宝箱图 + 同样的白字 + 同样的"50分/1时"时长角标), 白字判据分不开,
+# 于是旧版把白字一律当免费 -> 每次进面板都被 chest_info 的宝石像素判成付费(实测 366) 再拉黑 300s,
+# **一次都没解锁成功过** —— 这就是"该点宝箱却没点"。
+# 判据: 只有"此刻能免费操作"的格子才在卡片右上角画红角标 ❗(实测 x=槽中心+36..+52 / y735..748, ~16x14)。
+# 语料 149 帧 x 4 槽 = **596 个观测**, 逐槽数 (cx+34,730,cx+58,756) 里的红像素(degree=60 容差):
+#   '.' 空槽        n=288  恒 0
+#   'a' [[AD]加速]  n= 45  恒 0
+#   'p' 点击解锁(无角标) n= 53  恒 0   <- 只能花宝石
+#   'o' [开启]      n= 76  120~128    <- 免费可开, 当然带角标
+#   'U' 点击解锁(带角标) n=134  120~128   <- 免费解锁
+#   => (0,60) 区间内**一个骑墙值都没有**, 阈值取 60, 两边各留 2 倍余量。
+# 🔴 degree 必须 60 不能沿用默认 90: colorprint.tolerance(90)=13 太窄, 同一格只数到 48~55(<60 会全判付费);
+#    tolerance(60)=51 才罩得住徽章的抗锯齿边 -> 120~128. 容差窄到把自己判死的典型坑。
+# 交叉验证: 把 chest_info 面板帧按时间戳配到它前面最近(<=60s)的一张 lobby 帧, 比"面板免费/付费"与
+#   "大厅有没有 o/U 格" -> 免费 9 个时间戳 / 付费 34 个, **0 反例**(test_chest_unlock.py [3] 锁死)。
+# 真机第 21 轮首命中: 19:33:36 `.oUU` -> 点 o 格开箱 -> 19:33:45 `..UU` -> 点 U 格,
+#   面板打出"点色命中免费按钮 (275,795) 带内宝石像素 **0**" = 第一次真机证明 U 真的免费。
+# 🔴 角标是**状态**不是格子属性: 19:06 `.UUU`(角标 127/120/121) 到 19:14 同样的位置已是 `..pp`(全 0),
+#    用掉/时间推进都会让 U 退回 p -> 每帧现量, 绝不缓存"某格免费"。
+CHEST_BADGE_COLOR = 0xFF3B3B
+CHEST_BADGE_DEGREE = 60
+CHEST_BADGE_MIN = 60
+CHEST_BADGE_OFF = (34, 730, 58, 756)   # 相对槽中心 x 的取样框, 见上面的实测范围
 # [玩家对战]按钮: 也是同一套金色。外接框中心 = 落点, 所以取样框必须**只罩住按钮本体**:
 #   按钮本体实测恒定占 abs x93..268 / y651..700(n=6405~6539), 框左边界开到 x=88 就够了。
 # 坑(真机 2026-09-03 10:01 那批 lobby_live1002xx 共 10 帧): 框左边界原来开到 x=60, 于是**按钮左边那张
@@ -96,30 +123,41 @@ class LobbyPage(Page):
         y0, y1 = CHEST_BTN_BAND
         return ((cx - CHEST_BTN_HALF, y0, cx + CHEST_BTN_HALF, y1), (cx - 34, 846, cx - 14, 874))
 
+    @staticmethod
+    def badge_pixels(img, cx):
+        """卡片右上角红感叹号徽章的像素数(0 = 这一格此刻没有免费动作)"""
+        bx0, by0, bx1, by1 = CHEST_BADGE_OFF
+        return color_pixels(img, (cx + bx0, by0, cx + bx1, by1),
+                            CHEST_BADGE_COLOR, degree=CHEST_BADGE_DEGREE)
+
     def chest_states(self, img):
-        """逐槽点色判状态 -> 4 字符码: o=[开启] u=[点击解锁] a=[[AD]加速] .=空槽"""
+        """逐槽点色判状态 -> 4 字符码:
+        o=[开启] U=[点击解锁]且带红角标(点它免费) p=[点击解锁]但无角标(只能花宝石)
+        a=[[AD]加速] .=空槽 —— 角标判据见 CHEST_BADGE_OFF 上方注释"""
         out = []
         for cx, _cy in CHEST_SLOTS:
             btn, left = self._slot_boxes(cx)
             if color_pixels(img, btn, CHEST_BTN_COLOR) >= CHEST_YELLOW_MIN:
                 out.append('o' if color_pixels(img, left, CHEST_BTN_COLOR) >= CHEST_OPEN_LEFT_MIN else 'a')
             elif color_pixels(img, btn, CHEST_WHITE) >= CHEST_UNLOCK_WHITE_MIN:
-                out.append('u')
+                out.append('U' if self.badge_pixels(img, cx) >= CHEST_BADGE_MIN else 'p')
             else:
                 out.append('.')
         return ''.join(out)
 
     def _ready_chests(self, img):
-        """可点的宝箱槽位(左->右): o/u 是免费动作才点, a/. 一律不点。判据见 chest_states()"""
+        """可点的宝箱槽位(左->右): 只有 o=[开启] 和 U=[点击解锁]带红角标 才是免费动作。
+        p(解锁要宝石) / a([[AD]加速, 点它=看视频) / .(空槽) 一律不点。判据见 chest_states()"""
         st = self.chest_states(img)
-        return [slot for slot, code in zip(CHEST_SLOTS, st) if code in 'ou']
+        return [slot for slot, code in zip(CHEST_SLOTS, st) if code in 'oU']
 
     # 轮换游标(真机教训: 旧版死点 ready[0], 那一格若点了没跳转就永远卡在同一坐标)
     _chest_i = 0
 
     def act(self, ctx):
         img = ctx.f.img      # act_needs_ocr=False => ctx.f 只有图没有文字框, 别用 ctx.f.find()
-        # 1) 开宝箱: 按钮是纯金[开启] 或 白字[点击解锁] = 免费动作才点
+        # 1) 开宝箱: 纯金[开启] 或 白字[点击解锁]**且带红角标** = 免费动作才点
+        #    (白字但没角标 = 面板只会是[开启 💎120], 点了就是白跑一趟, 见 CHEST_BADGE_OFF 注释)
         #    再叠一层拉黑: 面板判出"这格要花钱"后 CHEST_PAID_BLOCK 秒内不再点它
         #    (真机 03:54: 那一格颜色不变 -> 大厅反复点 -> 反复关面板, 6 秒一圈刷了 16 次)
         st = self.chest_states(img)

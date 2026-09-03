@@ -233,18 +233,20 @@ def main():
         check(ctx.clicks == [], '两处白块都没有时必须不动作, 实际 %s' % (ctx.clicks,))
 
     print('[4] 大厅: 免费宝箱优先, [AD]加速格一律不点, 没宝箱才打一局')
-    # 槽位状态码(o/u=免费 a=[AD]加速 .=空)的逐帧真值回归在 test_print_route.py [9]
+    # 槽位状态码(o=[开启] U=[点击解锁]+红角标=免费 p=[点击解锁]无角标=要宝石 a=[AD]加速 .=空)
+    # 的逐帧真值回归在 test_print_route.py [9]
     # 这里只钉 act 的落点: 冷却/空槽帧必须退到[玩家对战], 半程帧必须跳到可点那一格
     EXPECT = {
-        'lobby_clean': CHEST_SLOTS[0],              # uuuu
-        'guide_live2': CHEST_SLOTS[0],              # ouuu
-        'live_lobby': CHEST_SLOTS[0],               # uuua  槽4 是[AD], 不许点
-        'live_now2': CHEST_SLOTS[0],                # uuuo
-        'lobby_live010733': CHEST_SLOTS[0],         # uo..
-        'flow4_s1_after_continue': CHEST_SLOTS[0],  # u...
+        'lobby_clean': CHEST_SLOTS[0],              # UUUU
+        'guide_live2': CHEST_SLOTS[0],              # oUUU
+        # 真机 19:14 定案: 三格白字[点击解锁]全都没红角标 = 面板只会要宝石 -> 一格都不点
+        'live_lobby': PVP,                          # pppa  槽4 还是[AD], 更不许点
+        'live_now2': CHEST_SLOTS[0],                # UUUo
+        'lobby_live010733': CHEST_SLOTS[0],         # Uo..
+        'flow4_s1_after_continue': CHEST_SLOTS[0],  # U...
         'live_20260902_a': CHEST_SLOTS[0],          # o...
         'lobby_chest_ready_2355': CHEST_SLOTS[0],   # o...
-        'lobby_mixed_0019': CHEST_SLOTS[1],         # au..  槽1 冷却 -> 槽2
+        'lobby_mixed_0019': PVP,                    # ap..  槽1 冷却 + 槽2 解锁要宝石 -> 打一局
         'lobby_live004222': CHEST_SLOTS[1],         # .u..
         'lobby_cooling_2335': PVP,                  # a...  唯一一格要点的是看广告 -> 打一局
         'lobby_live010807': PVP,                    # a...
