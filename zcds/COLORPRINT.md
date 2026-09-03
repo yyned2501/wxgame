@@ -210,21 +210,21 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 而**不是** `LABELS['ad_popup']`：广告 chrome 是白字黑底，标绝对指纹极易在别的黑底页上误中。
 它的出口改用**几何点色**判据 `ad_close_pos()`，见 §18。
 
-## 7. 当前标定状态（语料 240 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 中午实测）
+## 7. 当前标定状态（语料 256 张全部在 `C:\projects\wxgame\zcds\shots\`，2026-09-03 下午实测）
 
 | 页面 | 形态数 | 判色点/形态 | 单元/形态 | 语料全中 | 异页误中 | margin | 各形态覆盖帧数 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `battle` | 2 | 25 | 5 | 70/70 | 0 | 0.16 | 13, 57 |
-| `lobby` | 3 | 15 | 3 | 35/35 | 0 | 0.20 | 35, 21, 14 |
-| `result` | 1 | 25 | 5 | 22/22 | 0 | 0.12 | 22 |
+| `lobby` | 1 | 20 | 4 | 50/50 | 0 | **0.10** | 50（重标定后整组点只钉在导航栏中间那一格的**页签选中态**，§16.1/§16.2） |
+| `result` | 1 | 25 | 5 | 22/22 | 0 | 0.24 | 22 |
 | `chest_info` | 1 | 15 | 3 | 18/18 | 0 | 0.27 | 18 |
-| `vip_popup` | 2 | 15 | 3 | 9/9 | 0 | 0.27 | 4, 5（另有 5 点**锚点组**兜面板浮动，§6.2） |
+| `vip_popup` | 2 | 15 | 3 | **9/10** | 0 | 0.27 | 4, 5（第 10 帧要靠 5 点**锚点组**才全中，§6.2） |
 | `chest_open` | 1 | 15 | 3 | 8/8 | 0 | 0.40 | 8 |
-| `hero_level` | 1 | 40 | 8 | 5/5 | 0 | **0.10** | 5 |
+| `hero_level` | 1 | 40 | 8 | 5/5 | 0 | 0.12 | 5 |
 | `levelup` | 1 | 25 | 5 | 4/4 | 0 | 0.16 | 4 |
 | `matching` | 1 | 20 | 4 | 4/4 | 0 | 0.35 | 4 |
 | `versus` | 1 | 30 | 6 | 4/4 | **4** | **1.00** | 4 ← 唯一一行"异页误中"，见下表后注 |
-| `ad_popup` / `claim_popup` / `diamond_popup` / `unknown` | — | 无指纹 | — | — | — | — | 只走 OCR，见 §8；`ad_popup` 的"放完的整黑尾帧"连 OCR 关键词都没了，改由 `ad_close_pos()` 点色出口处理（§18） |
+| `ad_popup` / `claim_popup` / `diamond_popup` / `unknown` / `tab_other` | — | 无指纹 | — | — | — | — | **不标身份，但出口全是点色**：引导落点 / **关闭徽章（§20）** / 兄弟页签 / 返回箭头（§16）+ `ad_close_pos()`（§18）+ `find_close_badge()`（§8/§12）。只有 `ad_popup` 的**定页**仍是设计上保留的 OCR 例外（§19.4） |
 
 > **`versus` 那一行不是 bug，是已判定不修的单向重叠**：4 张 `matching`（匹配中）帧对 `versus` 指纹也是
 > 30/30 全中（反向只中 9/30 = 0.30），因为这两屏共享同一套底部栏 + 顶栏像素。
@@ -233,17 +233,31 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 > 那是一片逐帧变化的动画区，比现在更不稳。留在这里当反例：**margin 1.00 不必然要修，先看它有没有行为后果**。
 > 真正该盯的是 `versus` 只有 4 帧语料（见 `README.md` 待办第 5 条）。
 
-> **`hero_level` 那行 margin 只有 0.100 是"结构性的低"，不是没调好**：它的 40 个点全在标题横幅带
+> **`hero_level` 那行 margin 只有 0.12 是"结构性的低"，不是没调好**：它的 40 个点全在标题横幅带
 > y160~190，而 `chest_info` / `matching` 用的是**同一张蓝横幅 + 白字标题**，只是整体低 ~10px ——
 > 单点怎么挑都不独占，点数越多比例分母越大。接受它的理由和 `versus` 一样是**没有行为后果**：
-> 判定要 **40/40 全中**才算页，异页最高只撞中 4/40（1/10 量程）；`hero_level` 注册在 `chest_info`
+> 判定要 **40/40 全中**才算页，异页最高只撞中 5/40（1/8 量程）；`hero_level` 注册在 `chest_info`
 > **之前**，万一撞车它只干"点右上角关闭徽章"这一件无副作用的事，而 `chest_info` 的花钱护栏
 > （按钮带内紫宝石像素）在别的页帧上根本不成立。那张 07:48:30 的原误判帧已经人眼核对后进了语料
 > （`shots/hero_level_live074830.png`），永久锁在这组指纹里 —— 同一帧不会再被 OCR 骗成宝箱面板。
 
-语料分组：`battle` 70 / `lobby` 50 / `result` 22 / `other` 21（含 §18 那张放完的广告页）/ `chest_info` 18 / `arena` 13 / `lobby_dim` 11 / `chest_open` 8 / `vip_popup` 7（另 `vip_month` 2 张归并进它的第二形态）/ `hero_level` 5 / `matching` 4 / `versus` 4 / `levelup` 4 = **240**。
+> **`vip_popup` 那行 9/10 不是漏标**：第 10 张 `vip_popup_live105350` 是**面板浮动**帧，
+> 两组绝对指纹都是 0.00，靠 §6.2 的锚点相对点色才全中（`verify` 里它的 `src` 就是 `anchor`）。
+> `print_stats.py` 的 own-hit 只数绝对指纹，所以显示 9/10 —— 这一格**故意留成不满**，
+> 它同时是"锚点那条路真的在承重"的活证据。
+
+> **`lobby` 为什么从 3 形态 15 点变成 1 形态 20 点**：09-03 上午全域标定挑中了右侧活动图标和左上
+> 骷髅头像，看着 50/50 全中，其实下次换活动就废（就是 §9 第 1 条说的假厚）。现在标定域钉死在
+> **导航栏中间那一格的页签选中态** —— 它是页面身份本身，不随版本/账号/活动变；
+> 而 4 张兄弟页签帧（`shots/other_live10100*`）就是这条的考官：同一条导航栏、高亮板在别的格子上，
+> 中间这格必须是普通底色，指纹不许中（§16.2/§16.3）。
+
+语料分组：`battle` 70 / `lobby` 50 / `result` 22 / `other` 37（含 §18 那张放完的广告页 + §7 末注的 14 张 `stuck_*` 取证帧）/ `chest_info` 18（含 6 张 `stuck_01*`）/ `arena` 13 / `lobby_dim` 11 / `chest_open` 8 / `vip_popup` 8（另 `vip_month` 2 张归并进它的第二形态）/ `hero_level` 5 / `matching` 4 / `versus` 4 / `levelup` 4 = **256**。
 图名一律对应 `shots\<图名>.png`，各页 `# 形态: …` 注释里列的名字同理。
 带 `_live` 的真机帧由 `tools/pick_print.py` 的自动登记块并入 `LABELS`，不用手改。
+`shots/stuck_*.png`（主循环卡页时自己存的取证帧）也由同一个脚本自动并入 **`other`**，
+判据是**按所有标签去重**而不是只看 `other` —— 6 张 `stuck_01*` 本来就是 `chest_info` 的标定语料，
+重复塞进 `other` 会被 `verify` 当场报 6 项 `winner=chest_info`。这样 `check` 恒为「未标注：无」。
 
 **留出集**（2026-09-03 凌晨复跑）：`shots_live\*.png` 里**没进过语料**的 203 帧真机图
 （battle 138 / lobby 33 / chest_info 17 / result 12 / other 2 / unknown 1）
@@ -275,25 +289,42 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 （加 `--dry-run` 只看表不改文件），**别手写**。
 
 
-`other` 20 / `arena` 13 / `lobby_dim` 11 = **44 张"按设计不标身份"的语料**，它们不被任何指纹命中是**正确结果**：
+`other` 37 / `arena` 13 / `lobby_dim` 11 = **61 张"按设计不标身份"的语料**（= `verify` 末行那个「未全中 -> 交 OCR 61」），它们不被任何指纹命中是**正确结果**：
 
-- `other`（`dbg`、`probe_flag0`、`st_0`、`guide_live1/3`、`watch_124711~124758`、`other_quest_*`）= 任务列表、
-  观战、杂项弹窗等，本来就不是那 10 个页；`guide_live1/3` 是战斗页上叠的"指南"弹窗，刻意归 `other`，
-  避免和 `battle` 抢身份。
+- `other`（`dbg`、`probe_flag0`、`st_0`、`guide_live1/3`、`watch_124711~124758`、`other_quest_*`、
+  `other_live10100*`、`other_live_fu02`/`_hv_summon`、14 张 `stuck_*`）= 任务列表、观战、装备详情弹窗、
+  神器召唤页、杂项弹窗等，本来就不是那 10 个页；`guide_live1/3` 是战斗页上叠的"指南"弹窗，刻意归 `other`，
+  避免和 `battle` 抢身份。那 14 张 `stuck_*` 里 13 张 `stuck_arrow_*` MD5 **逐字节相同**
+  （磁力巨人/每日任务侧页，出口 = `back_arrow_pos()`）、1 张 `stuck_guide_*` 是压暗引导模态
+  （出口 = `guide_targets()`）—— **刻意不标指纹**，归 `other` 就是让 `verify` 钉住"一张指纹都不许中它"。
 - `arena` = 竞技场/任务这类**没有底部导航栏、但左上角有青色返回箭头**的侧页 -> 由 `back_arrow_pos()` 逃逸。
 - `lobby_dim` = **压暗的新手引导帧**（大厅被遮罩盖住），指纹整片失效 -> 由 `guide_targets()` 给落点。
 
 这三类合起来就是 §16 那三条逃逸出口的回归语料，**零 OCR**（`test_side_page_escape.py` 锁死）。
 
 
-## 8. 为什么 `ad_popup` / `claim_popup` / `diamond_popup` 还没有指纹
+## 8. 为什么 `ad_popup` / `claim_popup` / `diamond_popup` 不标指纹（2026-09-03 下午定稿：这条路不走了）
 
-语料里**没有这两页的独立标注图**（它们只在大厅截图里被部分压住出现过）。用不完整的图硬标，
-标出来的点要么落在弹窗外（等于标了大厅的点），要么落在动画上，只会造成误判。
-所以这两页暂时只靠 OCR 关键词（`claim_popup` 权重 1.5、`diamond_popup` 1.3，都排在 `lobby` 前）。
+**结论：这三页连"补语料再标"都不需要了 —— 出口已经换成和内容无关的通用点色判据。**
 
-**升级它们不需要改代码**：补几张这两页的完整截图 → 在 `LABELS` 登记 → `pick --label claim_popup`
-→ 回填 → `verify`。
+- **`claim_popup` / `diamond_popup` 全语料 0 帧、真机 0 命中**（`LABELS` 里根本没有这两个键；
+  全天 `bot.log` 00:56~13:55 里 `[领奖弹窗]` / `[钻石弹窗]` 两条 `act()` 播报各 **0** 次）。
+  它们只在"领完日常奖励""点付费开箱确认"那种分支里一闪而过，从没被单独截到过。
+  用不完整的图硬标，点要么落在弹窗外（等于标了大厅），要么落在动画上，只会造成误判。
+- **但它们要做的事只有一件：关掉自己。** `find_close_badge()`（§12）量的就是"弹窗右上角那颗红底白叉"，
+  和弹窗内容无关 —— `vip_popup` / 指南弹窗 / 装备详情弹窗实测是同一套图形 chrome。
+  所以两页的 `act()` 现在都**先按颜色找徽章**（~20ms），找到就点、`return True`，一个字都不读
+  （`act_needs_ocr = False`）；徽章也没中才惰性补一次本页 OCR 找文字按钮。
+  更硬的一条兜底在主循环那一侧：点色全表不中 + 认出关闭徽章 -> 直接交 `unknown`（§20），
+  **连"这页叫什么"都不用猜**。
+- 🔴 **顺手删掉一个危险盲点**：`diamond_popup` 旧版在"徽章没中 + OCR 也没读到字"时会
+  `ctx.click(270, 300)` **盲点弹窗正中**兜底遮罩 —— 而这一页恰恰是**花钱确认框**，
+  正中那块区域可能就是[确认]，点错一次就是真金白银的钻石。
+  现在改成认不出来就 `warning` + `return False`，宁可这一轮什么都不做，
+  让主循环的 `[卡页]` 计数器存帧取证（§7 那 14 张 `stuck_*` 就是这么来的）。
+- **`ad_popup` 的定页仍是设计上保留的唯一 OCR 例外**（§19.4）：广告创意每帧都变，
+  关键词只剩"放弃 / 是否继续观看视频"这种挽留框文案。但"什么时候才准点[关闭]"已经完全不靠定页 ——
+  看广告窗口一 arm，主循环就跳过路由（§19.2）。
 
 ## 9. 已知风险（别踩）
 
@@ -354,16 +385,16 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | 路径 | 作用 |
 | --- | --- |
 | `C:\projects\wxgame\zcds\colorprint.py` | 指纹原语：`tolerance` / `is_color` / `is_multi_color` / `print_score` / `scale_points` / `missing_points` / `find_multi_color` |
-| `C:\projects\wxgame\zcds\pages\base.py` | `Page` 基类（`points` / `prints` / `degree` / `pos_tol` / `act_needs_ocr` / `fingerprints()` / `print_match()`）+ `best_print()` / `soft_hit()` / `anchor_fingerprints()` / `anchor_points()` / `match_print()`（四级路由 §6/§6.2）/ `route_prints()` / `is_soft()` / `detect_ocr()`；§12 那些「颜色尺子」（含 `color_pixels()` / `color_button()`）都在这；`ad_close_pos()` 认放完的广告页右上[关闭]（§18）；`ad_claim_pos()` 认结算页横幅右侧那颗黄色[领取]（看广告）、`ad_pill_right()` 读广告页左上状态药丸的右边界判「放完了没有」（§19）；**文件末尾是底部导航栏那把尺子**：`NAV_POINTS` / `nav_hits()` / `nav_present()` / `nav_tab_cx()` / `NAV_LOBBY_TAB`（§16） |
+| `C:\projects\wxgame\zcds\pages\base.py` | `Page` 基类（`points` / `prints` / `degree` / `pos_tol` / `act_needs_ocr` / `fingerprints()` / `print_match()`）+ `best_print()` / `soft_hit()` / `anchor_fingerprints()` / `anchor_points()` / `match_print()`（四级路由 §6/§6.2）/ `route_prints()` / `is_soft()` / `detect_ocr()`；§12 那些「颜色尺子」（含 `color_pixels()` / `color_button()`）都在这；`ad_close_pos()` 认放完的广告页右上[关闭]（§18）；`ad_claim_pos()` 认结算页横幅右侧那颗黄色[领取]（看广告）、`ad_pill_state()` 一次读出广告页左上状态药丸的**三读数**（右边界 = 尺子一 / 带内白像素 = 尺子二 / 左边界 = 顶栏门闩，§19.3.1~19.3.2），`ad_pill_right()` 是只取右边界的薄包装；**文件末尾是底部导航栏那把尺子**：`NAV_POINTS` / `nav_hits()` / `nav_present()` / `nav_tab_cx()` / `NAV_LOBBY_TAB`（§16） |
 | `C:\projects\wxgame\zcds\pages\*.py` | 各页面的指纹（§7）与 `act()` 动作层点色（§12/§13）；声明 `act_needs_ocr = False` 的页整轮不读字 |
 | `C:\projects\wxgame\zcds\tools\pick_print.py` | 标定工具：`check` / `pick` / `verify` |
 | `C:\projects\wxgame\zcds\tools\print_stats.py` | 重算并写回各页指纹的统计注释（`--dry-run` 只看表） |
-| `C:\projects\wxgame\zcds\shots\` | 240 张标定语料（552x1006，含 2026-09-02/03 真机帧），`LABELS` 以 `shots/<图名>` 引用 |
+| `C:\projects\wxgame\zcds\shots\` | 256 张标定语料（552x1006，含 2026-09-02/03 真机帧 + 主循环自存的 `stuck_*` 取证帧），`LABELS` 以 `shots/<图名>` 引用 |
 | `C:\projects\wxgame\zcds\shots_live\` | 真机取证帧：`peek_*` = 只读探针，`dbg_*` = 主循环 `--shots N`，`probe_*` = 定点探针（**不入库**） |
 | `C:\projects\wxgame\zcds\scratch\` | 一次性逆向脚本与中间产物（**运行时不依赖**，见 `scratch\README.txt`）；`live_probe2.py` / `scale_experiment.py` / `live_stability.py` / `live_collect.py` 是真机取证脚本 |
 | `C:\projects\wxgame\zcds\scratch\scripts\test_chest_paid.py` | 真机帧离线回放：主循环同款 ROI(0.10~0.90) + scale 0.5 跑 11 帧，免费帧必点、付费帧必拒 |
-| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，240 张语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限；`CONTEXT_PAGES = ('tab_other',)` 放行"刻意不标指纹"的页） |
-| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：193 语料 + 260 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
+| `C:\projects\wxgame\zcds\test_print_route.py` | 离线回归测试（10 项，**256 张**语料；[9] = 大厅宝箱码表，[10] = §6.1 软命中门限；`CONTEXT_PAGES = ('tab_other',)` 放行"刻意不标指纹"的页） |
+| `C:\projects\wxgame\zcds\test_zero_ocr.py` | **「定页面零 OCR」回归**：256 语料 + 真机留出帧必须全被点色定页，扫完断言 OCR 模块没被 import |
 | `C:\projects\wxgame\zcds\test_cpu_offline.py` | 主循环离线集成（8 个场景，**25 帧只花 1 次 OCR**）：[6] = 点色零命中要连着两帧才肯兜底，[7] = 软命中稳帧放行，[8] = 付费宝箱格拉黑后不再回头点 |
 | `C:\projects\wxgame\zcds\test_battle_loop.py` | 战斗循环回归：进场帧清空 `clicked_cells` 并当场出手，整轮零 OCR |
 | `C:\projects\wxgame\zcds\test_act_zero_ocr.py` | **动作层零 OCR**：`result` / `chest_open` / `lobby` / `chest_info` / `levelup` / `hero_level` 六页逐帧落点表 + 45 帧**反向互斥**（同色黄按钮、同款红徽章在别的页帧上一次都不许出手），桩里把 OCR 入口全改成抛异常（§13） |
@@ -373,6 +404,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `C:\projects\wxgame\zcds\test_anchor_print.py` | **锚点相对点色回归**（5 段）：锚点组命中 / 异页 0.00 / 偏移不串台 / 查找 6ms / 真机帧回放（§6.2） |
 | `C:\projects\wxgame\zcds\test_ad_escape.py` | **广告页自救回归**：判据本身（含 6 张正常页零误命中）+ "认出广告页 -> **arm 看广告窗口，但一帧都不点**" + 伪造 `_ad_t0 = time.time()-20` 喂真帧验证"等满才点[关闭]、离开广告页才 `done`" + 全程零 OCR（§18/§19） |
 | `C:\projects\wxgame\zcds\test_ad_watch.py` | **看广告自动领奖回归**（4 段）：① `ad_claim_pos` 判据（17 张结算帧正例 / 218 帧反例，含同色的[立即开箱]）② 药丸右边界读数与「相对缩窄」分界 ③ `_ad_tick` 状态机（等满 / 超时撒手 / 压根没进广告三分支，用 `FakeTime` 顶掉 `auto_bot.time`）④ `step()` 端到端：窗口期间路由表与 OCR 一次都不许被调用 |
+| `C:\projects\wxgame\zcds\test_popup_escape.py` | **弹窗关闭徽章出口回归**（5 段）：徽章帧四判据交叉、`unknown` 落点带 `BADGE_OFFSETS`、`claim_popup`/`diamond_popup` 零 OCR、`diamond_popup` 绝不盲点、820 帧对账里"谁都不认"只剩 3 张（§20） |
 | `C:\projects\wxgame\zcds\test_side_page_escape.py` | **侧页逃逸回归**（6 场景，**全程 OCR = 0 次**）：引导模态判定与落点、兄弟页签实测点 `(276,950)`、有箭头无栏的侧页零 OCR、卡牌页箭头误命中但路由先认栏、导航栏语料分界、unknown 同帧点击次数上限（§16） |
 | `C:\projects\wxgame\zcds\scratch\scripts\audit_holdout.py` | 留出集审计：`shots_live/` 里没进过语料的帧逐张定点色 + 判定，统计真要兜底的帧数 |
 | `C:\projects\wxgame\zcds\test_price_guard.py` | 价格护栏回归（39 项）：18 张真机帧回放（**帧表派生自 `LABELS`**，文件名带 `paid` 即付费帧）+ 合成文本框 + 合成图像，全程不依赖 OCR |
@@ -390,7 +422,7 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 
 | 判据 | 位置 | 干什么 | 标定值（实测） |
 | --- | --- | --- | --- |
-| `find_close_badge(img)` | `pages/base.py` | 找弹窗右上角那个**红底白叉 ✕**，返回点击坐标 | 红 mask `(r>185)&(g<105)&(b<105)&(r-max(g,b)>90)`；12px 网格 + BFS 连通域；红像素 550~950（实测 716~818）、外接框 30~60（实测 36~48）、框内白像素 ≥60（实测 142~163）；多候选取**最靠右**；106 帧 0 误报，单帧 15~20ms |
+| `find_close_badge(img)` | `pages/base.py` | 找弹窗右上角那个**红底白叉 ✕**，返回点击坐标 | 红 mask `(r>185)&(g<105)&(b<105)&(r-max(g,b)>90)`；12px 网格 + BFS 连通域；红像素 550~950（实测 716~818）、外接框 30~60（实测 36~48）、框内白像素 ≥60（实测 142~163）；多候选取**最靠右**；106 帧 0 误报，单帧 15~20ms。**它同时是三处出口**：`vip_popup`/`chest_info` 的关闭键、`claim_popup`/`diamond_popup` 的默认出口（§8）、`unknown` 的第 4 条零 OCR 出口（§20），也是 `vip_popup` 锚点组的锚（§6.2） |
 | `is_back_arrow(img)` | `pages/base.py` | 认左下角那个**青色返回箭头**，用于从没有指纹的侧页（任务/商店）逃回大厅 | 框 `(38,950,90,992)` 内 `(b>170)&(g<140)&(r<150)` 像素数 150~1000；实测任务页 463 / 大厅·结算·宝箱面板 0 / 战场页 1860（超上限，且战场是已知页）；点击点 `(63,970)` |
 | `PRICE_RE` + `PRICE_BARE_RE` | `pages/chest_info.py` | **只有否决权**：这一帧恰好带文字时，邻域出现价格字样/裸数字就拒点；文字永远不是放行的理由 | `[￥¥] ?\d` / `\d+ ?元` / 钻石 / 宝石 / 充值；邻域 ±70/±60px |
 | `is_transition(img)` | `pages/base.py` | **转场闸门**：白烟 / 黑屏帧点色必然全表不中，先认出来整帧跳过，一帧 OCR 都不花 | 见 §14 |
@@ -398,7 +430,8 @@ detect_ocr(pages, f)                 -> (page, score)       # 第 4 级兜底, �
 | `PRICE_BARE_RE` + `gem_cost_pixels(img,cx,cy)` | `pages/chest_info.py` | 认"花钱立即开箱"：把按钮**下方**的纯数字当价格，再数按钮正下方窄带里的**紫宝石像素**，任一命中就拒点 | 裸数字 `^\d{1,4}$`（只在按钮下方 `0<=dy<=60`、±70px 内生效）；宝石带**改成相对点色锚点**：`GEM_BAND_BTN = (-50,0,50,40)`（旧值 `(-45,12,45,45)` 是按 OCR 框中心量的，留着只给回归脚本对照）；mask `(r>170)&(g<130)&(b>150)`；阈值 **60**；18 帧实测 **免费 13 帧恒 0 / 付费 5 帧恒 362** |
 | `ad_close_pos(img)` | `pages/base.py` | 认**放完之后整页发黑**的广告页右上那颗[关闭]药丸 | 前置：页面主体（`y>=150`）平均亮度 <=30 **且** 白像素占比 <=3%（实拍 0.1 / 0.00，最暗的正常页 68.6 / 6.7%）；然后顶栏带 `y∈[55,118]`、右半边 `x>=380` 里的白团块，像素 >=60、外接框宽 40~170 / 高 14~60；实测中心 `(472,90)`；815 帧命中 8 帧全是广告页、**0 误命中**（§18） |
 | `ad_claim_pos(img)` | `pages/base.py` | 认结算页[失败礼包]横幅右侧那颗**黄色[领取]（看广告）** | 黄 `0xFDCA33`、box `(300,700,552,880)`（横幅左边的金币/木材也是黄的，必须挡在外面）、`degree=90`、`min_px=2200`（实测 3187~3236）**+ 外接框 `w∈[108,145] h∈[26,50]`** —— 光看颜色分不开：它和[宝箱立即开箱]是同一个黄，只能靠「扁宽胶囊 vs 窄高块」分开（§19） |
-| `ad_pill_right(img)` | `pages/base.py` | 读广告页左上**状态药丸右边界 x**，判「广告放完了没有」 | 带 `(55,118,0,330)`（右半是[关闭]，不混进来）里 `max>170` 且单列白像素 >=2 的最右列；**绝对宽度没有意义**（不同广告 SDK 同一句文案实测 164 与 209），只跟本场最宽比、缩掉 >=28px 才算放完（§19） |
+| `ad_pill_right(img)` | `pages/base.py` | 读广告页左上**状态药丸右边界 x**（= **尺子一**；现在只是 `ad_pill_state()` 的薄包装） | 带 `(55,118,0,330)`（右半是[关闭]，不混进来）里 `max>170` 且单列白像素 >=2 的最右列；**绝对宽度没有意义**（不同广告 SDK 同一句文案实测 164 与 209），只跟本场最宽比、缩掉 >=28px 才算放完（§19） |
+| `ad_pill_state(img)` | `pages/base.py` | 同一颗药丸一次量出**三个读数** `(右边界, 带内白像素, 左边界)` = 尺子一 / 尺子二 / 顶栏门闩 | 尺子一 = 带内白像素最右列；尺子二 = 带内白像素**总数**（量"有几个字"，与边框位置无关）；门闩 = 带内白像素**最左列**（顶栏被广告画面糊住时它会跳）。阈值 `AD_PILL_SHRINK = 28`px / `AD_PILL_SHRINK_PCT = 0.15` 且持续 `AD_PILL_LOW_HOLD = 4s` / `AD_PILL_LEFT_TOL = 20`px（§19.3） |
 | `PRICE_SIGNS` + `_price_class()` | `battle_scan.py` | 把白色价格标签读成 **25/50/100/250**，喂给 `rank_cell()` 排档位 | 逐位数闭合孔数签名 `(0,0)=25 / (0,1)=50 / (0,1,1)=100 / (0,0,1)=250`；318 帧 1488 个白标签：614/535/205/65 个，**四簇零混叠**（§17） |
 
 ### 为什么这几条不走 OCR
@@ -721,13 +754,14 @@ rank_cell(c) -> (tier, -near_tower, -c['y'])   # 50矿 > 50兵营 > 50问号 > 2
 用户诉求：**「这个界面上点击黄色的看广告领取，可以看广告的地方就自动看完」**。
 链路全部零 OCR（`config.WATCH_ADS = True` 是唯一开关，关掉就退回"不点[领取]、只点[继续]"）。
 
-### 19.1 三把新尺子
+### 19.1 三把新尺子（现在是"三把 + 一把门闩"，见 19.3）
 
 | 尺子 | 干什么 | 关键分界 |
 | --- | --- | --- |
 | `ad_claim_pos()` | 结算页横幅右侧那颗黄色[领取] | 同一个黄 `0xFDCA33` 在[立即开箱]上也有 -> 用**外接框形状**分开：领取是扁宽胶囊（实测 w 124~126 / h 32~38），开箱被面板挤成窄高块（w 58 / h 63，左边缘还被取样框切在 x=300） |
 | `ad_close_pos()` | 广告页右上[关闭] | 见 §18 |
-| `ad_pill_right()` | 广告页左上状态药丸右边界 = "放完了没有" | 见 19.3 |
+| `ad_pill_right()` | 广告页左上状态药丸右边界 = "放完了没有"（**尺子一**，现在是 `ad_pill_state()` 的薄包装） | 见 19.3 |
+| `ad_pill_state()` | 同一颗药丸一次量**三个读数** `(右边界, 带内白像素, 左边界)` | 右边界 = 尺子一、白像素 = 尺子二、左边界 = **顶栏门闩**；见 19.3 |
 
 全语料复扫（815 帧 552x1006，`scratch/scripts/adclaim_scan2_0903.py`，11.5s）：
 `ad_claim_pos` 命中 **46 帧，全部是 result 页**（含 17 张 `LABELS=result` 标定帧），中心恒 `(412,781)~(412,782)`，
@@ -764,6 +798,46 @@ rank_cell(c) -> (tier, -near_tower, -c['y'])   # 50矿 > 50兵营 > 50问号 > 2
 注意 `ad_pill_right()` 在**正常页也会返回 176~329**（顶栏任何白字都算），
 所以它**只在 `ad_close_pos()` 命中时才调用**，绝不单独当判据。
 
+#### 19.3.1 第二把尺子：带内白像素总数（量"有几个字"，与边框位置无关）
+
+右边界只量"最右那根竖线在哪"。万一某家 SDK 把"倒计时"和"已获得奖励"渲染成**同一个宽度**，
+尺子一永远不响，只能干等 `AD_WATCH_MAX = 40s`。所以同一帧再数一次带内白像素总数 ——
+字数少了像素就少，是同一件事的第二种量法。`ad_pill_state()` 一次把三个读数都量出来。
+
+同一场广告连拍 5 帧 + 两个反例（`scratch/scripts/pill_scan_0903.py`，单位 px）：
+
+| 帧 | 右边界 | 带内白像素 | 左边界 | 说明 |
+| --- | --- | --- | --- | --- |
+| `watch_124711` | 211 | 827 | 32 | 倒计时 27s |
+| `watch_124723` | 211 | **830** | 32 | 本场峰值（基准就记在这一帧） |
+| `watch_124735` | 204 | 794 | 32 | 倒计时掉到 8s：右边界只缩 **7px**(<28)、白像素只少 **4.3%**(<15%) -> 两把尺子都不许响 |
+| `watch_124746` | **164** | **606** | 32 | `已获得奖励`：右边界缩 **47px**(>=28) -> **尺子一先响**，白像素同时少 27.0% |
+| `watch_124758` | 164 | 606 | 32 | 放奖态稳定 |
+| `ad_popup_live122400`（**另一路 SDK**） | 209 | **914** | 39 | 同一句"已获得奖励"，白像素比上面那场的**倒计时**还多 |
+| `watch_124707`（**广告画面糊上顶栏**） | 257 | 157 | **222** | `ad_close_pos()` 这一帧返回 **None**，两把尺子必须一起作废 |
+
+- 尺子二阈值：`AD_PILL_SHRINK_PCT = 0.15` **且**连续 `AD_PILL_LOW_HOLD = 4.0s` 都少才算。
+  倒数第二行那 914 就是"不许定绝对阈值"的实证 —— 和尺子一款子一样，只能跟**本场峰值**比。
+- 真机全天 7 场广告 **7/7 都是尺子一先响**（`药丸缩窄 270->209`），尺子二触发 **0 次**：
+  它是**保险，不是替代**。回归 `test_ad_watch.py` 的 [3b] 子用例专门伪造"右边界全程不缩、只有白像素变少"
+  的序列，逼尺子二独自收手一次。
+
+#### 19.3.2 顶栏门闩：左边界漂移 = 这一帧的读数不可信
+
+`watch_124707` 那帧广告创意糊到了顶栏上：白像素从 830 暴跌到 **157**、左边界从 32 跳到 **222**，
+但广告**根本没放完**。没有门闩的话尺子二会判成"字变少了 = 已获得奖励"-> **提前点[关闭] = 奖励作废**。
+所以 `_ad_tick()` 记下药丸**左边界基准**（跟"白像素最多"那一帧一起记），
+漂移超过 `AD_PILL_LEFT_TOL` 就把**这一帧两把尺子的读数全部作废**（也不清基准，下一帧继续量）。
+
+🔴 **这个门限一开始取的是 6，`test_ad_escape.py` 第 [4] 段当场炸 3 项**：该段用**另一路 SDK** 的帧开窗
+（左边界 39），下一段换成本场 `watch_*`（左边界 32），漂移 7px > 6 -> 门闩误触发 -> 尺子全不作数 ->
+永远等不到"放完"。**两家广告 SDK 的药丸左边界天然差 7px，而真被盖住是 32->222 = 差 190px**
+-> 门限取 **20**：7px 放过、190px 拦住。
+
+反证（`scratch/scripts/gate_proof_0903.py`）：把 `auto_bot.AD_PILL_LEFT_TOL` 临时调成 1e6 关掉门闩，
+`test_ad_watch.py` 立刻退出码 1 并报 `FAIL 顶栏被广告盖住的帧竟然动了手 (t+=5 -> acted)`
+-> 证明 [3c] 那个用例**不是空跑**。
+
 ### 19.4 挽留框策略反转（`pages/ad_popup.py`）
 
 以前：`ad_popup` 页一律点[放弃]，因为它只会挡路。现在既然要"自动看完"，策略反过来：
@@ -799,4 +873,156 @@ rank_cell(c) -> (tier, -near_tower, -c['y'])   # 50矿 > 50兵营 > 50问号 > 2
 （`barracks 50` 38 / `ore 50` 16 / `unknown 50` 8），旧版"只开 25"的现象没有再出现。
 9 条 WARNING 全是良性的：`点色零命中 第1/2帧` 6 条（转场瞬间，下一帧就认出页面）+ `白烟帧` 3 条。
 
-整轮 13 个回归脚本全绿（新增 `test_ad_watch.py`，改 `test_ad_escape.py` / `test_act_zero_ocr.py`）。
+#### 19.6.1 下午又跑了一轮 `--max-steps 600`
+
+窗口 13:24:22~13:55:13，`bot.log` 1103 行（统计脚本 `scratch/scripts/lognums2_0903.py`）：
+
+| 项 | 实测 |
+| --- | --- |
+| 路由条数 | **545**：`battle` 481 / `chest_info` 20 / `lobby` 19 / `result` 12 / `versus` 7 / `vip_popup` 4 / `matching` 2 |
+| 来源分布 | `print-order` 502 / `print-prefer` 40 / `print-anchor` 2 / `ocr` **1** |
+| 那 1 条 OCR | 13:32:58 `[指纹] result ocr 0.95`（动画盖住一个判色点、软命中门限没够）；同时白捡一张待标语料 `shots_live/ocr_result_133258.png` = §20.4 最后 3 张之一 |
+| WARNING | 22 条，**全良性**：17 × `[兜底] 点色零命中 第1/2帧`（转场瞬间）+ 5 × `[转场] 白烟帧` |
+| `Traceback` / `giveup` | 0 / 0 |
+| 广告 | 3 场（13:24:22 / 13:28:49 / 13:32:58 arm），**3/3 都是 `药丸缩窄 270->209`**，33 / 33 / 33 秒，点 `[关闭] (472,90)` 后 3s 已离开广告页 |
+
+#### 19.6.2 全天 `bot.log`（00:56:35~13:55:13，5564 行）汇总
+
+`scratch/scripts/lognums3_0903.py`：
+
+- `开始看广告` **7 次**（13:05:31 / 13:08:14 / 13:12:21 / 13:16:52 / 13:24:22 / 13:28:49 / 13:32:58），
+  收手原因 **7/7 全是 `药丸缩窄 270->209`**（33 / 33 / 36 / 33 / 33 / 33 / 33 秒）。
+- `药丸字变少`（尺子二）**0 次**、`顶栏门闩` **0 次**、`弹窗关闭徽章`（§20 新出口）**0 次** ——
+  三条都是本轮新加的保险，还没在真机见过世面，只能靠回归用例锁着。
+- ⚠️ `等满 40s` 用 `grep` 数出来是 7 次，**全是假命中**：`开始看广告` 那行 INFO 文案本身就含
+  「或 等满 40s」。真兜底次数是 **0**。
+- 侧页出口累计：`退出侧页(箭头)` **23** / `[侧页] 点色零命中但认出…引导落点` **10** / 兄弟页签 **0**。
+
+整轮 **14 个回归脚本全绿**（新增 `test_ad_watch.py` / `test_popup_escape.py`，
+改 `test_ad_escape.py` / `test_act_zero_ocr.py`）。
+
+
+## 20. 第 4 条零 OCR 出口 = 弹窗关闭徽章（2026-09-03 午后落地）
+
+### 20.0 为什么还要第 4 条出口
+
+前三条出口（§16.2 / §16.4 / §18）认的都是**游戏自己的页面**：新手引导模态、底部兄弟页签、侧页青色返回箭头。
+剩下这一类不一样 —— **一个模态弹窗压在某个游戏页上面**：
+
+- 它把底下的导航栏一起盖住了 → 页签出口不响（`nav_present` 要看到 16 个静态像素）；
+- 它没有左下角的青色箭头 → 箭头出口不响；
+- 它没有大白气泡 + 手套 → 引导出口不响。
+
+旧版这种帧的完整遭遇：点色全表不中 → 白烧一次 **675ms 全图 OCR** → OCR 也认不出页名（弹窗内容随账号进度变，本来就没法标指纹）→
+落到 `unknown` → 只能按 `MASK_POINTS` **盲点遮罩**，而模态弹窗压根不吃遮罩点击 → 原地死循环。
+
+新出口的道理和 §16.4 一样：**这帧的身份判据本身就是那个红底白叉 ✕**（§12 的 `find_close_badge`，
+`vip_popup`/`chest_info` 早就在用它当关闭键）。认出它 = 同时知道「这是什么」和「该点哪」，一个字都不用读。
+
+### 20.1 判据链顺序：引导 → 徽章 → 页签 → 箭头（`auto_bot.py` step() 的 2b2 段）
+
+```python
+guide = guide_targets(img)
+badge = None if guide else find_close_badge(img)
+on_tab = (not guide and badge is None and nav_present(img)
+          and nav_tab_cx(img) != NAV_LOBBY_TAB[0])
+arrow = None if (guide or on_tab or badge is not None) else back_arrow_pos(img)
+```
+
+三条排序理由，全是实测出来的：
+
+| 关系 | 为什么 |
+| --- | --- |
+| 徽章在**引导之后** | 引导那条判据更完整：`guide_targets()` 返回的落点表第 1 个点往往就是同一个关叉，让信息量大的先拿分 |
+| 徽章在**页签之前** | 弹窗是模态的，压住的那层导航栏点了也没用；而 `nav_present` 在弹窗半透明遮罩下仍可能误亮 |
+| 页签在**箭头之前** | §16.4 的真机教训：卡牌页左下那颗青色卡牌图标会被 `back_arrow_pos` 误认成返回箭头 (84,960) —— 那正是页签自己，点它原地打转 |
+
+和 §16.4 同一条铁律：**认出出口绝不提前 `return`**。只做三件事 ——
+`self._nohit_streak = NO_HIT_OCR_AFTER - 1`（停在"已升级"水位，下一帧还零命中就继续出手，不必再白等一帧）、
+`ocr_ran = False`、把 `self.f` 换成空 OCR 结果继续走正常动作层。
+徽章这一路 `page = self.pages[-1]`（就是 `unknown`）、`src = 'escape-badge'`，日志刷
+`[侧页] 点色零命中但认出弹窗关闭徽章 (471, 224) -> 交 unknown, 不花 OCR`。
+
+### 20.2 全 820 帧对账（`shots/` 256 + `shots_live/` 577 里所有 552x1006 帧；脚本 `scratch/scripts/badge_cross_0903.py`）
+
+点色全表定不出页的帧共 **152** 张，四个判据的原始交叉表：
+
+```
+trans  guide  tab    arrow  badge  n
+False  True   False  False  False  61     -> 引导
+False  False  False  True   False  44     -> 箭头
+True   False  False  False  False  19     -> 转场闸门(比三条更早, 见 §18)
+False  False  True   False  False  9      -> 页签
+False  True   False  True   False  7      -> 引导(链里抢过箭头)
+False  False  False  False  True    6     -> 徽章(本节点新增出口)
+False  False  True   True   False  3      -> 页签(必须先于箭头)
+False  False  False  False  False   3     -> 只剩这 3 张还要 OCR
+```
+
+按 §20.1 的判据链归并：**引导 68 / 箭头 44 / 转场 19 / 页签 12 / 徽章 6 / 谁都不认 3 = 152**。
+
+- 🔴 徽章那 6 帧里**没有任何一帧同时带引导/页签/箭头**（看交叉表第 6 行：另外四列全 `False`）
+  → 这条新出口是**纯增量**，对既有三条零 OCR 出口的判定结果零影响（`test_popup_escape.py` [1] 段把它钉住）。
+- 那 3 张「页签 + 箭头」同帧的，在 step() 里被 `on_tab` 抢走 → 交 `tab_other` 点中间[战斗]，**根本不进 `unknown`**。
+- 6 帧 = 只有 **4 个不同弹窗**（`shots_live/fu_02.png`、`hv_summon.png` 在 `shots/` 里有同名副本）：
+
+| 帧 | 徽章中心 | 是什么弹窗 |
+| --- | --- | --- |
+| `shots/guide_live1.png` | (465, 235) | 新手指南弹窗 |
+| `shots/guide_live3.png` | (465, 235) | 同上（另一帧，中心一模一样） |
+| `shots/other_live_fu02.png` = `shots_live/fu_02.png` | (471, 224) | 符石/装备详情弹窗 |
+| `shots/other_live_hv_summon.png` = `shots_live/hv_summon.png` | (471, 197) | 英灵召唤详情弹窗 |
+
+**三个不同高度（235 / 224 / 197）** —— 这就是「落点只能现算、绝不能写死坐标」的实证。
+
+### 20.3 `unknown._candidates()` 里的顺序与落点表
+
+```python
+pts = guide_targets(img)                 # 1) 引导模态(最多 5 个候选点)
+badge = find_close_badge(img)            # 2) 弹窗关闭徽章 -> 本节点
+pos = back_arrow_pos(img)                # 3) 侧页返回箭头
+if nav_present(img) and ... != NAV_LOBBY_TAB[0]:   # 4) 兄弟页签(纯兜底)
+```
+
+这里页签排最后，和 §20.1 的判据链顺序**刻意不同**：step() 那条链决定「这帧走哪条出口」，
+`_candidates()` 决定「已经落在 `unknown` 上了，该点哪」。页签那条只是兜底 ——
+万一某帧是从 2c 的 OCR 那条路掉进 `unknown` 的，照样知道该点中间[战斗]回大厅。
+（真「页签+箭头」同帧的 3 张早在 step() 里被 `tab_other` 接走了，不会走到这里。）
+
+```python
+BADGE_OFFSETS = [(0, 0), (0, -6), (6, 0), (-6, 0)]     # 徽章本体 ~36x36
+MAX_TRY = 5
+```
+
+- 中心点由 `find_close_badge` 现算（红底连通域的几何中心），本身就有 **±2px 抖动** —— 来自偶尔挡住它的手指图标；
+- 语料 6 帧全部**第一点即中**，后面三个偏移点只是保险；
+- 候选点完画面签名（`frame_sig`：28x51 灰度缩略）还一模一样 → `_give_up()`：存取证帧 + 睡 `GIVEUP_SEC = 45s`，
+  帧名按 `what` 分 `stuck_guide_*` / `stuck_badge_*` / `stuck_arrow_*`；
+- 🔴 取证帧**离线绝不让 `shots/` 沾手**：`stuck_dir(ctx)` 按 `getattr(ctx, 'dry_run', True)` 判，
+  没带这个属性的假 ctx 一律当离线 → 写 `scratch/reg_stuck/`（§11）。真机才写 `shots/`。
+  这条是上一轮踩出来的：离线回归每跑一次就往语料里丢几张没标注的帧，`check` 的未标注列表一路从 12 涨到 17。
+
+### 20.4 最后 3 张还要花 OCR 的帧
+
+| 帧 | 实测 | 为什么不硬凑出口 |
+| --- | --- | --- |
+| `shots_live/ck_a2.png` | 卡牌页**整页被新手引导压暗**：像素实测 ≈ 参考值 x0.35，手套 + 发光圆圈指着中间[战斗]页签，但**没有大白气泡** → `guide_targets()` 不响；`nav_hits()` = **0/16**（整页压暗把导航栏 16 个静态像素全灭了，dy ±24 扫描确认无位移，纯压暗） | 和 `gs_00` 同一种情形 |
+| `shots_live/gs_00.png` | 同上 | 同上 |
+| `shots_live/ocr_result_133258.png` | 13:32:58 那**唯一一条 OCR 路由**的现场帧（动画盖住一个判色点、软命中门限没够）；还没进 `LABELS` | 补语料 + 重标即可换成点色，不需要新判据 |
+
+为什么**先不放宽** `guide_targets()` 去接 `ck_a2`/`gs_00`：那条判据靠"大白气泡"这个硬特征，
+放宽成"整页压暗 + 有手套"就会误伤一切被半透明遮罩压住的正常页 —— 语料里 `lobby_dim` 那 **11 张**就是同一类压暗帧，
+它们本该走 `lobby` 而不是被当成引导。三条出口谁都不认的帧数现在锁在 **3/820**，这个上界比"多救两张"值钱。
+
+### 20.5 回归锁：`test_popup_escape.py`（5 段）
+
+| 段 | 锁什么 |
+| --- | --- |
+| [1] | 4 张徽章帧：点色全表不中 + 不是转场帧，但 `find_close_badge` 认得出，且引导/页签/箭头三条路**全都不响**（证明插入位置零影响） |
+| [2] | 真跑 `App.step()` 三帧：`page=unknown`、`ocr_ran=False`、实际落点离徽章中心 ≤8px |
+| [3] | `ClaimPopupPage().act()`：关闭徽章优先，**一个字节 OCR 都不读**；并断言到这一步 `OCR_CNT == 0` |
+| [4] | `DiamondPopupPage().act()`：源码里已无 `ctx.click(270, 300)` 盲点；认不出来 → `False` + **零点击**；有徽章 → 仍点徽章 |
+| [5] | 全语料扫描：点色定不出页 **且** 四条零 OCR 出口全不认的帧数 `<= 3`（上界锁死，防新页面把 OCR 路由重新撑回去） |
+
+真机状态：这条出口 **0 次命中**（§19.6.2 全天日志 `弹窗关闭徽章 0`）—— 语料里那 4 个弹窗都是上午手动点掉的，
+脚本还没在自动流程里撞见过。所以现在只能靠回归锁着，不拿它当"已验证"。

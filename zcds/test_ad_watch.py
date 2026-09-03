@@ -38,6 +38,7 @@ CLAIMED = {
 }
 # 实拍连拍: 广告页左上状态药丸的右边界(文案越短越靠左)
 PILL = [
+    # 帧名                     右边界 带内白像素 药丸左边界  说明
     ('shots/watch_124711.png', 211, '广告 | 27 秒后可获得奖励'),
     ('shots/watch_124723.png', 211, '广告 | 27 秒后可获得奖励'),
     ('shots/watch_124735.png', 204, '广告 |  8 秒后可获得奖励'),
@@ -98,7 +99,8 @@ except Exception:
 
 import auto_bot
 from auto_bot import App, BLANK_AD_AFTER
-from pages.base import AD_PILL_SHRINK, ad_claim_pos, ad_close_pos, ad_pill_right
+from pages.base import (AD_PILL_LEFT_TOL, AD_PILL_LOW_HOLD, AD_PILL_SHRINK, AD_PILL_SHRINK_PCT,
+                        ad_claim_pos, ad_close_pos, ad_pill_right, ad_pill_state)
 
 
 def new_app():
@@ -149,6 +151,23 @@ check(done is not None and wide - done >= AD_PILL_SHRINK,
       '真放完 %d->%d(缩 %d)判不出 -> 永远等不到关闭' % (wide, done, wide - done))
 check(wide - ad_pill_right(load('shots/ad_popup_live122400.png')) < AD_PILL_SHRINK,
       '换一路广告 SDK(药丸天然窄)时相对判据仍不误判放完')
+
+# ======================= [2b] 药丸第二把尺子: 带内白像素 =======================
+print('[2b] ad_pill_state: 白像素数(=字数)是同一件事的第二种量法, 右边界不缩时它还能响')
+WHITE = {'watch_124711': (211, 827, 32), 'watch_124723': (211, 830, 32),   # 倒计时 27s
+         'watch_124735': (204, 794, 32),                                    # 倒计时 8s(掉一位数字)
+         'watch_124746': (164, 606, 32), 'watch_124758': (164, 606, 32),    # 已获得奖励
+         'ad_popup_live122400': (209, 914, 39)}                             # 另一路 SDK 的放奖帧
+for rel, (wr_, wc, wl) in WHITE.items():
+    got = ad_pill_state(load('shots/%s.png' % rel))
+    check(got == (wr_, wc, wl), '%s 药丸读数 %s != 实测 %s' % (rel, got, (wr_, wc, wl)))
+jitter = (830 - 794) / 830.0
+drop = (830 - 606) / 830.0
+check(jitter < AD_PILL_SHRINK_PCT < drop,
+      '分界成立: 倒计时自身抖动只少 %.1f%% < 门限 %.0f%% < 换成放奖文案少 %.1f%%'
+      % (jitter * 100, AD_PILL_SHRINK_PCT * 100, drop * 100))
+check(914 > 830 and 914 > 830 * (1 - AD_PILL_SHRINK_PCT),
+      '另一路 SDK 的放奖帧白像素 914 比本场倒计时峰值 830 还多 -> 只能跟本场峰值比, 不能定绝对阈值')
 
 # ======================= [3] 窗口状态机(伪造时钟) =======================
 print('[3] _ad_tick 状态机(伪造时钟): 放完才点[关闭], 中途一帧都不点')
@@ -208,6 +227,64 @@ try:
     FT.t += App.AD_WATCH_TOTAL + 5
     check(app._ad_tick(load(same)) == 'giveup', '超 AD_WATCH_TOTAL 必须撒手(防死等)')
     check(app._ad_until == 0.0 and not CLICKS, '撒手时不该留窗口也不该乱点: %s' % (CLICKS,))
+
+    # [3b] 尺子二: 右边界全程不缩(某家 SDK 两句文案同宽), 只有白像素变少 -> 也要能收手
+    CLICKS[:] = []
+    FT.t = 30000.0
+    app = new_app()
+    app.start_ad_watch('回归-尺子二')
+    _real_pill = auto_bot.ad_pill_state
+    SCRIPT = iter([(211, 827, 32), (211, 830, 32), (209, 600, 32), (209, 601, 32)])
+    auto_bot.ad_pill_state = lambda img: next(SCRIPT)
+    try:
+        for dt, want in ((0.0, 'wait'), (5.0, 'wait'), (5.0, 'wait'), (4.0, 'acted')):
+            FT.t += dt
+            r = app._ad_tick(load('shots/watch_124711.png'))
+            check(r == want, '尺子二 t+=%.0f -> %s, 应为 %s' % (dt, r, want))
+        check(app._ad_pill_max == 211,
+              '右边界最大只缩到 %s(差 2px < AD_PILL_SHRINK=%d) -> 第一把尺子确实没响'
+              % (app._ad_pill_max, AD_PILL_SHRINK))
+        check(app._ad_white_max == 830 and app._ad_pill_left == 32,
+              '基准取的是"字最多"那帧: 白峰值=%s 左边界=%s' % (app._ad_white_max, app._ad_pill_left))
+        check(CLICKS == [CLOSE], '尺子二只该点一次[关闭]: %s' % (CLICKS,))
+        # 提前放奖不许抢跑: 白像素刚变少但还没持续够 AD_PILL_LOW_HOLD 秒
+        CLICKS[:] = []
+        FT.t = 31000.0
+        app2 = new_app()
+        app2.start_ad_watch('回归-尺子二-没持续够')
+        quick = iter([(211, 830, 32), (211, 830, 32), (211, 600, 32), (211, 600, 32)])
+        auto_bot.ad_pill_state = lambda img: next(quick)
+        for dt in (0.0, 13.0, 1.0, 1.0):
+            FT.t += dt
+            check(app2._ad_tick(load('shots/watch_124711.png')) == 'wait',
+                  '白像素只低了 %.0fs(<AD_PILL_LOW_HOLD=%.0fs)就点[关闭] -> 可能是假信号'
+                  % (dt, AD_PILL_LOW_HOLD))
+        check(not CLICKS, '持续不够就不该动手: %s' % (CLICKS,))
+    finally:
+        auto_bot.ad_pill_state = _real_pill
+
+    # [3c] 门闩: 广告画面糊上顶栏(左边界从 32 跳到 222, 白像素暴跌到 157)不许被当成放奖
+    #      故意把"低值"持续 5s+5s(> AD_PILL_LOW_HOLD) —— 少了这道门闩, 尺子二必然误判放奖去点[关闭]
+    CLICKS[:] = []
+    FT.t = 32000.0
+    app3 = new_app()
+    app3.start_ad_watch('回归-顶栏被盖')
+    _real_pill = auto_bot.ad_pill_state
+    covered = iter([(211, 830, 32), (211, 830, 32), (257, 157, 222), (257, 157, 222)])
+    auto_bot.ad_pill_state = lambda img: next(covered)
+    try:
+        for dt in (0.0, 13.0, 5.0, 5.0):
+            FT.t += dt
+            r = app3._ad_tick(load('shots/watch_124711.png'))
+            check(r == 'wait', '顶栏被广告盖住的帧竟然动了手 (t+=%.0f -> %s)' % (dt, r))
+        check(not CLICKS and app3._ad_white_max == 830 and app3._ad_pill_left == 32
+              and app3._ad_pill_max == 211,
+              '盖住顶栏的帧两把尺子都不作数, 基准也没被污染: 白峰值=%s 左=%s 右峰值=%s 落点=%s'
+              % (app3._ad_white_max, app3._ad_pill_left, app3._ad_pill_max, CLICKS))
+        check(app3._ad_pill == (257, 157, 222),
+              '门闩生效的前提是"确实量了这一帧再判它不可信", 读数是 %s' % (app3._ad_pill,))
+    finally:
+        auto_bot.ad_pill_state = _real_pill
 
     # 压根没进广告(点[领取]没跳转): 几秒内认出还是游戏自己的页 -> 撒手交回路由
     CLICKS[:] = []

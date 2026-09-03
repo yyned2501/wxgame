@@ -11,7 +11,7 @@ class ResultPage(Page):
     next_pages = ('lobby', 'claim_popup', 'ad_popup', 'vip_popup', 'matching',
                   'levelup', 'hero_level', 'unknown')
     # 点色指纹: 由 tools/pick_print.py pick --label result 自动标定(勿手改)
-    # 1 种形态 x 5 个十字单元(每单元 5 点, 共 25 判色点/形态), 任一形态全中即判为 result; 语料 22/22 全中 / 异页误中 0 / margin 0.12(异页最高只中 3/25 点) / 各形态覆盖 [22] 帧
+    # 1 种形态 x 5 个十字单元(每单元 5 点, 共 25 判色点/形态), 任一形态全中即判为 result; 语料 22/22 全中 / 异页误中 0 / margin 0.24(异页最高只中 6/25 点) / 各形态覆盖 [22] 帧
     points = [
         [388, 146, 0x573324], [390, 146, 0x512E26], [386, 146, 0x573324],
         [388, 148, 0x573324], [388, 144, 0x573324], [76, 162, 0x412734],

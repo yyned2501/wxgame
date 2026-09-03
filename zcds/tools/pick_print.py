@@ -103,6 +103,24 @@ for _lbl in list(LABELS):
             _live_added.setdefault(_lbl, 0)
             _live_added[_lbl] += 1
 
+# ---- 自动登记真机取证帧 shots/stuck_*.png -> other 组 ------------------------------
+# 这些是 unknown 页"点了没反应"时自动存的证据帧: 人眼核对过, 但**刻意不标指纹**。
+# 实测(2026-09-03 15:05, scratch/scripts/stuck_md5_0903.py): 16 张 stuck_arrow_*.png
+#   MD5 完全相同(同一张 磁力巨人/每日任务 侧页, 左下有青色返回箭头), 出口 = back_arrow_pos();
+#   stuck_guide_*.png 是压暗的新手引导模态, 出口 = guide_targets()。
+# 两类都不需要指纹 —— 归 other 组的意义是让 verify 钉住"这些帧一张指纹都不许中",
+# 并让 check 的"未标注"列表归零(以前每跑一轮真机就多几张, 全靠手登记)。
+# 注: 回归脚本(dry_run)存的取证帧走 scratch/reg_stuck/, 不会落到这里(见 pages/unknown.py)。
+# 注意"已登记"要按**所有标签**算, 不能只看 other: 01:08~01:17 那 6 张 stuck_0108*~011716
+#   是真机开箱卡死时存的证据帧, 当时人就核对过并登记成了 chest_info 的标定语料。
+#   把它们重复塞进 other 组 = 一边要求它全中、一边要求它一张都不中, verify 当场自相矛盾。
+_stuck_known = {os.path.splitext(os.path.basename(n))[0] for _l in LABELS for n in LABELS[_l]}
+for _p in sorted(glob.glob(os.path.join(ROOT, 'shots', 'stuck_*.png'))):
+    _b = os.path.splitext(os.path.basename(_p))[0]
+    if _b not in _stuck_known:
+        LABELS['other'].append('shots/' + _b)
+        _stuck_known.add(_b)
+
 # 归到同一"页面身份"的标签(同一 Page 类的多种形态)
 # other 组的语义由 verify 钉住: 这些帧必须一张指纹都不中(= 没有任何页面敢冒充它们)。
 # arena(竞技场晋级页)是刻意不标指纹的: 版面内容(地图美术/横幅文字/奖励图标)全随等级变,

@@ -603,10 +603,33 @@ def ad_claim_pos(img):
 AD_PILL_BAND = (55, 118, 0, 330)        # (y0, y1, x0, x1): 顶栏左半, 右半是[关闭]药丸, 不混进来
 AD_PILL_MIN_COLS = 2                    # 单列白像素 >=2 才算数(滤掉抗锯齿毛刺)
 AD_PILL_SHRINK = 28                     # 相对本场最宽缩掉这么多像素 = 文案换成"已获得奖励"
+# ---- 第二把尺子(2026-09-03 14:50 实测, scratch/scripts/pillwhite_0903.py) ----
+# 右边界只量"最右那根竖线在哪": 万一某家 SDK 把倒计时和放奖两句渲染成同一个宽度,
+# 第一把尺子永远不响 -> 只能干等 AD_WATCH_MAX=40s。带内**白像素总数**量的是"有几个字",
+# 跟边框位置无关, 是同一件事的第二种量法。实拍连拍(同一场广告, 单位 px):
+#   watch_124711 倒计时27s 827 / 124723 倒计时27s 830 / 124735 倒计时8s 794
+#   watch_124746 已获得奖励 606 / 124758 已获得奖励 606
+# 倒计时自身抖动(数字掉一位)只有 4.3%, 换成"已获得奖励"少 27% -> 门限取 15% 两头都留余量。
+# 另一路 SDK 的放奖帧(ad_popup_live122400)白像素是 914, 比上面那场的倒计时还多
+#   -> 和右边界一样, 只能跟"本场峰值"比, 不能定绝对阈值。
+AD_PILL_SHRINK_PCT = 0.15               # 带内白像素比本场峰值少这么多 = 文案变短了
+AD_PILL_LOW_HOLD = 4.0                  # 而且要连续这么多秒都少才算(见下)
+# 门闩阈值: 左边界漂移超过这么多 px 才算顶栏被广告画面盖住。
+#   不能取太小 —— 实测两家广告 SDK 的药丸左边界天然差 7px(32 / 39, 见
+#   scratch/scripts/pillwhite_0903.py), 取 6 会把换了个广告源误判成盖顶栏
+#   (test_ad_escape 第[4]段就是这么炸的); 真被盖住(watch_124707)是 32->222,
+#   差 190px -> 取 20: 7px 放过, 190px 拦住。
+AD_PILL_LEFT_TOL = 20
 
 
-def ad_pill_right(img):
-    """广告页左上状态药丸的右边界 x; 这一帧没有顶栏(不是广告页) -> None"""
+def ad_pill_state(img):
+    """广告页左上状态药丸 -> (右边界 x, 带内白像素数, 左边界 x); 这一帧没有顶栏 -> None
+
+    右边界 = 第一把尺子(文案越短越靠左), 白像素数 = 第二把尺子(字数越少像素越少),
+    左边界 = 门闩: 广告画面糊上顶栏时实拍只剩 157 个白像素、左边界从 32 跳到 222
+    (shots/watch_124707), 那种帧两把尺子都不许作数, 否则会被误判成文案变短 -> 提前关广告;
+    左边界只是这一帧量得准不准的锚, 漂移门限见 AD_PILL_LEFT_TOL(两家 SDK 天然差 7px)。
+    """
     import numpy as np
     y0, y1, x0, x1 = AD_PILL_BAND
     a = to_arr(img)
@@ -617,7 +640,15 @@ def ad_pill_right(img):
     m = (reg.max(axis=2) > 170)
     cols = m.sum(axis=0)
     nz = np.nonzero(cols >= AD_PILL_MIN_COLS)[0]
-    return int(nz.max()) + x0 if len(nz) else None
+    if not len(nz):
+        return None
+    return int(nz.max()) + x0, int(m.sum()), int(nz.min()) + x0
+
+
+def ad_pill_right(img):
+    """药丸右边界(第一把尺子); 这一帧没有顶栏(不是广告页) -> None"""
+    st = ad_pill_state(img)
+    return st[0] if st else None
 
 
 # ==================== 底部一级导航栏(5 个页签) ====================

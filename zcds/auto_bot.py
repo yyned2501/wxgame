@@ -29,9 +29,10 @@ from colorprint import REF_SIZE
 from config import PAGE_CFG
 from vision import Vision, ScreenFeature
 from pages import ALL_PAGES
-from pages.base import (AD_PILL_SHRINK, NAV_LOBBY_TAB, ad_close_pos, ad_pill_right,
-                        back_arrow_pos, detect_ocr, guide_targets, is_soft, is_transition,
-                        nav_present, nav_tab_cx, route_prints)
+from pages.base import (AD_PILL_LEFT_TOL, AD_PILL_LOW_HOLD, AD_PILL_SHRINK, AD_PILL_SHRINK_PCT,
+                        NAV_LOBBY_TAB, ad_close_pos, ad_pill_state, back_arrow_pos, detect_ocr,
+                        find_close_badge, guide_targets, is_soft, is_transition, nav_present,
+                        nav_tab_cx, route_prints)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(ROOT, 'bot.log')
@@ -99,6 +100,10 @@ class App:
         self._ad_t0 = 0.0                # 本轮广告开始时刻
         self._ad_until = 0.0             # 窗口硬上限时刻(= 开始 + AD_WATCH_TOTAL)
         self._ad_pill_max = 0            # 本场广告左上状态药丸见过的最大右边界(判"放完了")
+        self._ad_white_max = 0           # 第二把尺子: 本场药丸带内白像素峰值(=字数最多的那帧)
+        self._ad_pill_left = None        # 峰值帧的药丸左边界, 用来识破"广告画面盖住顶栏"的假读数
+        self._ad_low_t0 = 0.0            # 白像素开始持续偏低的时刻(0 = 当前不偏低)
+        self._ad_pill = ()               # 最近一次药丸读数 (右边界, 白像素, 左边界), 只为播报用
         self._ad_logged = 0.0            # 上次"播放中"播报的时刻
         self._ad_seen = False            # 是否真见过广告 chrome(见过才允许等满全程)
         self._ad_closing = False         # 已点过[关闭], 正在确认它真的关掉了
@@ -165,6 +170,7 @@ class App:
         now = time.time()
         self._ad_t0, self._ad_until = now, now + self.AD_WATCH_TOTAL
         self._ad_pill_max, self._ad_logged = 0, now
+        self._ad_white_max, self._ad_pill_left, self._ad_low_t0, self._ad_pill = 0, None, 0.0, ()
         self._ad_seen, self._ad_closing = False, False
         self._ad_close_t = self._ad_retry_at = 0.0
         logging.info(f'[广告] 开始看广告({why}): 期间不定页/不跑 OCR/不点击; '
@@ -215,25 +221,53 @@ class App:
                             f'-> 判定没在看广告, 交回正常路由')
             self._end_ad_watch()
             return 'giveup'
-        # 3) 正在放: 一帧都不点, 只盯状态药丸有没有缩窄(= 文案换成"已获得奖励")
+        # 3) 正在放: 一帧都不点, 只盯状态药丸有没有变短(= 文案换成"已获得奖励")。
+        #    两把尺子任一命中即算放完: ①右边界相对本场最宽缩掉 >=AD_PILL_SHRINK px
+        #                  ②带内白像素相对本场峰值少 >=AD_PILL_SHRINK_PCT 且持续 AD_PILL_LOW_HOLD 秒
+        shrink, gate = False, ''
         if pos is not None:
-            pr = ad_pill_right(img)
-            shrink = False
-            if pr is not None:
-                self._ad_pill_max = max(self._ad_pill_max, pr)
-                shrink = self._ad_pill_max - pr >= AD_PILL_SHRINK
+            st = ad_pill_state(img)
+            if st is not None:
+                pr, wc, pl = st
+                self._ad_pill = st
+                if self._ad_pill_left is not None and abs(pl - self._ad_pill_left) > AD_PILL_LEFT_TOL:
+                    # 广告画面糊上顶栏: 这一帧的读数不可信, 两把尺子都不作数(也不清基准)
+                    gate = (f'药丸左边界 {self._ad_pill_left}->{pl} 漂移超 '
+                            f'{AD_PILL_LEFT_TOL}px = 顶栏被广告盖住 -> 本轮尺子作废')
+                    self._ad_low_t0 = 0.0
+                else:
+                    if wc > self._ad_white_max:
+                        # "字最多"的那一帧才是基准(倒计时一定比放奖后长), 左边界跟着它走
+                        self._ad_white_max, self._ad_pill_left = wc, pl
+                    self._ad_pill_max = max(self._ad_pill_max, pr)
+                    shrink = self._ad_pill_max - pr >= AD_PILL_SHRINK
+                    if shrink:
+                        how = f'药丸缩窄 {self._ad_pill_max}->{pr}'
+                    elif wc <= self._ad_white_max * (1 - AD_PILL_SHRINK_PCT):
+                        if not self._ad_low_t0:
+                            self._ad_low_t0 = now
+                        elif now - self._ad_low_t0 >= AD_PILL_LOW_HOLD:
+                            shrink = True
+                            how = (f'药丸字变少 {self._ad_white_max}->{wc}px 持续 '
+                                   f'{now - self._ad_low_t0:.0f}s')
+                    else:
+                        self._ad_low_t0 = 0.0
             if waited >= self.AD_WATCH_MIN and (shrink or waited >= self.AD_WATCH_MAX):
-                how = (f'药丸缩窄 {self._ad_pill_max}->{pr} = 已获得奖励' if shrink
-                       else f'等满 {self.AD_WATCH_MAX:.0f}s')
+                how = (how + ' = 已获得奖励') if shrink else f'等满 {self.AD_WATCH_MAX:.0f}s'
                 logging.info(f'[广告] 看了 {waited:.0f}s, {how} -> 点[关闭] {pos}')
                 self.click(*pos)
                 self._ad_closing = True
                 self._ad_close_t = now
                 self._ad_retry_at = now + self.AD_CLOSE_RETRY
                 return 'acted'
+        if gate:
+            logging.info(f'[广告] {gate}')
         if now - self._ad_logged >= 10.0:
             self._ad_logged = now
-            logging.info(f'[广告] 播放中 {waited:.0f}s: 本轮不动作, 也不花 OCR')
+            logging.info(f'[广告] 播放中 {waited:.0f}s: 本轮不动作, 也不花 OCR '
+                         f'(药丸 右={self._ad_pill[0] if self._ad_pill else "-"} '
+                         f'白={self._ad_pill[1] if self._ad_pill else "-"}/峰 {self._ad_white_max} '
+                         f'左={self._ad_pill[2] if self._ad_pill else "-"})')
         return 'wait'
 
     def _ad_page_hard(self, img):
@@ -471,14 +505,18 @@ class App:
             #      不必再花 675ms 全图 OCR 去猜页面名字(猜出来也没有对应的动作层)。
             #      同样的道理适用于[新手引导模态]: 大白气泡 + 手套指向哪里就该点哪里,
             #      这件事用 1.8ms 的行游程就能判出来, 完全不需要 OCR。
-            #      顺序: 引导模态(盖在别人家页面上, 先点掉) -> 兄弟页签(导航栏在) -> 侧页箭头。
+            #      顺序: 引导模态 -> 弹窗关闭徽章 -> 兄弟页签 -> 侧页箭头。
             #      页签必须排在箭头前面: 真机实测卡牌页左下那颗青色卡牌图标会被
             #      back_arrow_pos 误认成返回箭头(84,960) —— 那正好是页签自己, 点它原地打转。
+            #      关闭徽章排在页签前面: 弹窗是模态的, 压住的那层导航栏点了也没用
+            #      (2026-09-03 语料对账: 全 820 帧里徽章帧只有 6 张(= 4 个不同弹窗), 且没有一张同时带
+            #      页签/箭头/引导 —— 插在这里对既有三条路零影响)。
             guide = guide_targets(img)
-            on_tab = (not guide and nav_present(img)
+            badge = None if guide else find_close_badge(img)
+            on_tab = (not guide and badge is None and nav_present(img)
                       and nav_tab_cx(img) != NAV_LOBBY_TAB[0])
-            arrow = None if (guide or on_tab) else back_arrow_pos(img)
-            if on_tab or guide or arrow is not None:
+            arrow = None if (guide or on_tab or badge is not None) else back_arrow_pos(img)
+            if on_tab or guide or arrow is not None or badge is not None:
                 # 认出出口 -> 停在"已升级"水位: 下一帧还零命中就继续出手, 不必再白等一帧
                 # (旧版这里把计数清 0, 结果引导页/页签页每隔一帧才动一次手)
                 self._nohit_streak = NO_HIT_OCR_AFTER - 1
@@ -490,10 +528,14 @@ class App:
                                     f' -> 交 tab_other 点中间[战斗]回大厅, 不花 OCR')
                     page, score, src = self.page_by_name('tab_other'), 1.0, 'escape-tab'
                 else:
-                    what = ('新手引导落点 %s' % (guide[:2],) if guide
-                            else '返回箭头 %s' % (arrow,))
+                    if guide:
+                        what, tag = '新手引导落点 %s' % (guide[:2],), 'guide'
+                    elif badge is not None:
+                        what, tag = '弹窗关闭徽章 %s' % (badge,), 'badge'
+                    else:
+                        what, tag = '返回箭头 %s' % (arrow,), 'arrow'
                     logging.warning(f'[侧页] 点色零命中但认出{what} -> 交 unknown, 不花 OCR')
-                    page, score, src = self.pages[-1], 1.0, 'escape-' + ('guide' if guide else 'arrow')
+                    page, score, src = self.pages[-1], 1.0, 'escape-' + tag
             else:
                 # 2c) 连着两帧都没有任何指纹(新页面/被别的窗口遮挡) -> 才允许花一次全图 OCR
                 self._nohit_streak = 0

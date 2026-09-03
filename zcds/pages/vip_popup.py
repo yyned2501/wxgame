@@ -23,7 +23,7 @@ class VipPopupPage(Page):
     act_needs_ocr = False     # 关闭键靠颜色定位(find_close_badge), 文字键才惰性补 OCR
 
     # 点色指纹: 由 tools/pick_print.py pick --label vip_popup|vip_month 自动标定(勿手改)
-    # 2 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 vip_popup; 语料 9/9 全中 / 异页误中 0 / margin 0.27(异页最高只中 4/15 点) / 各形态覆盖 [4, 5] 帧
+    # 2 种形态 x 3 个十字单元(每单元 5 点, 共 15 判色点/形态), 任一形态全中即判为 vip_popup; 语料 9/10 全中 / 异页误中 0 / margin 0.27(异页最高只中 4/15 点) / 各形态覆盖 [4, 5] 帧
     #   2026-09-03 重标第2组: 旧月卡指纹在真机 00:03 那帧只中 5/15(弹窗有动画), 改挑两帧都稳的文字行 y538
     prints = (
         (   # 来自 vip_popup
