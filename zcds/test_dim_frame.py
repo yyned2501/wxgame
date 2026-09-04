@@ -130,7 +130,8 @@ if rate > 0.60:
     fail.append('[4] 压暗 0.70 之后还有 %.0f%% 全中, 指纹疑似只认亮度' % (rate * 100))
 
 # ------------------------------------- [5] 锁住"设计内盲区"分类器本身
-print('[5] known_blind: 放行要看一条独立证据(同一次 step 的 OCR 复核帧, 逐字节相同)')
+print('[5] known_blind: 放行要看独立证据(dbg_ 帧 = 同一次 step 的 OCR 复核帧且逐字节相同;'
+      ' ocr_ 帧 = 自证, 页名就是那次判决本身)')
 import known_blind as kb
 import PIL.Image as I
 
@@ -177,6 +178,13 @@ for tag, cond, why in [
      no(kb.unclaimed_note(_pair('result', 140000, 140001), 0.99, 'soft')), 'e'),
     ('有页贴着软命中门限抢(0.20) -> 不放行',
      no(kb.unclaimed_note(_pair('result', 150000, 150001), 0.20, None)), 'f'),
+    # 2026-09-04 R40 教训: --shots 是取证倒数计数器, 用完就不存 dbg_ 帧了, 而 ocr_ 帧还在存。
+    # 当时 ocr_battle_124311.png 孤零零一张 -> 闸门误红。钉住"ocr_ 帧自证"这条新规则,
+    # 同时钉住"dbg_ 帧仍然必须有兄弟"(它没有自证能力: 页名是点色判的, 不是 OCR 判的)。
+    ('ocr_ 帧单独存在(没有 dbg_ 兄弟) -> 放行(它自己就是 OCR 判决存证)',
+     ok(kb.unclaimed_note(_mk('ocr_result_170000.png', 7), 0.067, None)), 'g'),
+    ('dbg_ 帧单独存在(没有 ocr_ 兄弟) -> 不放行(点色判的页名不能自证)',
+     no(kb.unclaimed_note(_mk('dbg_9_result_171000.png', 7), 0.067, None)), 'h'),
 ]:
     check(cond, tag)
 

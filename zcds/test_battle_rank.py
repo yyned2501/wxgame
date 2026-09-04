@@ -162,17 +162,22 @@ from pages.battle import tier_census, cell_key, TIER_NAMES
 board8 = [cell(50, 'ore', x=100, y=700), cell(50, 'barracks', x=200, y=700),
           cell(50, 'unknown', x=300, y=700), cell(25, 'unknown', x=100, y=760),
           cell(100, 'barracks', x=200, y=760), cell(250, 'barracks', x=300, y=760)]
-c0 = tier_census(board8, set())
-check(c0 == '\u5728\u67b66 \u53ef\u70b96 50\u77ff:1 50\u5175:1 50\u95ee:1 25:1 100:1 250:1',
+# 红标签: white=False, 所以它**不进** clickable, 只贡献 census 里的「红N」列
+red8 = [cell('red', 'barracks', x=400, y=700, white=False),
+        cell('red', 'unknown', x=400, y=760, white=False)]
+c0 = tier_census(board8, set(), len(red8))
+check(c0 == '在架6 可点6 红2 50矿:1 50兵:1 50问:1 25:1 100:1 250:1',
       '全部未点 -> %s' % c0)
 # 把三个 50 塞进冷却表(键算法必须和 act() 用的是同一个 cell_key)
 busy = {cell_key(c) for c in board8 if c['cls'] == 50}
-c1 = tier_census(board8, busy)
-check(c1 == '\u5728\u67b66 \u53ef\u70b93 25:1 100:1 250:1', '50 全在冷却 -> %s' % c1)
+c1 = tier_census(board8, busy, len(red8))
+check(c1 == '在架6 可点3 红2 25:1 100:1 250:1', '50 全在冷却 -> %s' % c1)
 # 注意不能直接判 "'50' not in": 250 里就含一个 50
 check(not any(('%s:' % k) in c1 for k in ('50\u77ff', '50\u5175', '50\u95ee')),
       '50 \u4e09\u6863\u5168\u90e8\u6d88\u5931 = \u8fd9\u884c\u80fd\u8bc1\u660e\"\u70b9 25 \u65f6\u786e\u5b9e\u6ca1\u6709\u672a\u70b9\u7684 50\": %s' % c1)
-check(tier_census([], set()) == '\u5728\u67b60 \u53ef\u70b90', '\u7a7a\u68cb\u76d8\u4e0d\u70b8: %r' % tier_census([], set()))
+check(tier_census([], set()) == '在架0 可点0 红0', '空棋盘不炸: %r' % tier_census([], set()))
+check(tier_census(board8, set()) == '在架6 可点6 红0 50矿:1 50兵:1 50问:1 25:1 100:1 250:1',
+      'red 缺省 0: 老调用点不传第三个参数也不会没了这一列')
 check(TIER_NAMES[rank_cell(cell(50, 'unknown'))[0]] == '50\u95ee'
       and TIER_NAMES[rank_cell(cell(30, 'unknown'))[0]] == '\u5206\u4e0d\u6e05',
       'TIER_NAMES 和 rank_cell 的档位编号对齐')
@@ -193,7 +198,7 @@ _lg.setLevel(logging.DEBUG)
 _cap = _Cap()
 _saved = _lg.handlers[:]   # 摘掉根 logger 原有 handler, 别让这条日志同时泄到 stderr
 _lg.handlers = [_cap]
-B.scan_battle_cells = lambda img, *a, **k: [dict(c) for c in board8]
+B.scan_battle_cells = lambda img, *a, **k: [dict(c) for c in board8 + red8]
 try:
     ctx8 = FakeCtx(img)
     BattlePage().act(ctx8)
@@ -202,7 +207,7 @@ finally:
     _lg.handlers = _saved
     _lg.setLevel(_old_lvl)
 line8 = [r for r in recs if '\u70b9\u683c\u5b50' in r]
-check(len(line8) == 1 and '| \u5728\u67b66 \u53ef\u70b96 50\u77ff:1' in line8[0],
+check(len(line8) == 1 and '| 在架6 可点6 红2 50矿:1' in line8[0],
       'act() 日志尾巴带盘点: %s' % (line8[0][-70:] if line8 else '<无>'))
 
 
@@ -282,6 +287,44 @@ check(n_new >= n_old * 1.4, '抽样 %d 帧: 新判据 %d 个可点格子 vs 旧�
       len(sub), n_new, n_old, n_new / float(max(1, n_old))))
 check(e_new <= len(sub) * 0.25, '抽样里「一个可点格子都扫不到」的帧 %d/%d = %.1f%% (旧判据 %.1f%%)' % (
       e_new, len(sub), 100.0 * e_new / len(sub), 100.0 * e_old / len(sub)))
+
+print('\n[10] 「一格都点不了」要在日志里说清是买不起还是看不见 (2026-09-04 §34.7)')
+_red_only = [dict(c) for c in red8]     # 红标签 white=False -> 可点集为空, 但看得见
+_nothing = []   # 连红标签都没扫到 = 判据瞎了的形状
+_seen = []
+
+
+class _Cap10(logging.Handler):
+    def emit(self, r):
+        _seen.append(r.getMessage())
+
+
+_lg.setLevel(logging.DEBUG)
+_saved10 = _lg.handlers[:]
+_lg.handlers = [_Cap10()]
+try:
+    B._LAST_EMPTY_NOTE[0] = 0.0
+    B.scan_battle_cells = lambda im, *a, **k: [dict(c) for c in _red_only]
+    acted10 = BattlePage().act(FakeCtx(img))
+    B.scan_battle_cells = lambda im, *a, **k: list(_nothing)
+    BattlePage().act(FakeCtx(img))                     # 节流窗口内: 不许刷屏
+    B._LAST_EMPTY_NOTE[0] = 0.0
+    BattlePage().act(FakeCtx(img))                     # 归零后: 瞎了的形状也要报
+finally:
+    B.scan_battle_cells = orig_scan
+    _lg.handlers = _saved10
+    _lg.setLevel(_old_lvl)
+    B._LAST_EMPTY_NOTE[0] = 0.0
+_empty_lines = [r for r in _seen if '[战斗] 无可点' in r]
+check(acted10 is False, '无可点的帧不动手: acted=%s' % acted10)
+check(len(_empty_lines) == 2, '20s 内只记 1 条, 节流归零后第 2 条: %s' % _empty_lines)
+check(len(_empty_lines) > 1 and '在架0 可点0 红2' in _empty_lines[0],
+      '红标签数进 census: %s' % (_empty_lines[0] if _empty_lines else '<无>',))
+check(len(_empty_lines) > 1 and '钱不够' in _empty_lines[0],
+      '「买不起」要说清: %s' % (_empty_lines[0] if _empty_lines else '<无>',))
+check(len(_empty_lines) > 1 and '红0' in _empty_lines[1] and 'white_mask' in _empty_lines[1],
+      '「看不见」也要说清: %s' % (_empty_lines[1] if len(_empty_lines) > 1 else '<无>',))
+
 
 print('\nSUMMARY failures = %d  (耗时 %.1fs)' % (len(FAILS), time.time() - T0))
 sys.exit(1 if FAILS else 0)
