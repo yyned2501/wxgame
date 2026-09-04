@@ -52,6 +52,7 @@ def check(ok, msg):
     print('  %s %s' % ('ok  ' if ok else 'FAIL', msg))
     if not ok:
         FAILED.append(msg)
+    return bool(ok)
 
 
 def load(rel):
@@ -285,6 +286,46 @@ check(_stuck_msgs(12, ad=1) == [], '看广告窗口整段豁免 -> 不报')
 check(_stuck_msgs(0) == [], '零命中计数为 0 -> 不报')
 app.cur_page, app._ad_until, app.unknown_idle = _saved
 _lg.getLogger().removeHandler(_h)
+
+print('[9] 运营弹窗盖住"有指纹的页"(秘境大冒险): 必须两帧内点掉 X, 一帧 OCR 都不许花')
+# 坑(真机第 28 轮 00:46~00:50): 这帧点色整表不中, OCR 又把背景里的"玩家对战"读成 versus,
+# 而 versus 的动作层全在弹窗底下 -> 每 2 帧白烧一次 675ms OCR、4 分钟零动作。
+# 修法就是"出口判据排在 OCR 前面"(§2b2): 关闭徽章 (477,311) 是颜色可认的身份 + 出口。
+# 顺带证明 live_audit(§33) 里那 12 张 ocr_versus_* 脏标签不是 bug: 标签错, 出口对。
+PROMO = ['shots_live/ocr_versus_004639.png', 'shots_live/ocr_versus_004701.png',
+         'shots_live/ocr_versus_005032.png']
+for rel in PROMO:
+    if not os.path.exists(os.path.join(D, rel)):
+        continue                       # shots_live/ 是 gitignore 的真机取证目录, 新克隆没有
+    img = load(rel)
+    bd = find_close_badge(img)
+    if not check(bd is not None, '  %s 关闭徽章认得出 %s' % (rel, bd)):
+        continue
+    QUEUE[:] = [img]
+    for q in app.pages:
+        for attr in ('_last', '_sig', '_tries', '_gave_up_at'):
+            if hasattr(q, attr):
+                setattr(q, attr, 0 if attr == '_gave_up_at' else None if attr == '_sig' else 0.0)
+    app.cur_page = None                # 当成"刚开 bot 第一帧"来复现: 不带上文状态
+    app._nohit_streak = 0
+    app._trans_streak = 0
+    app._zerohit_run = 0
+    app._ocr_zero = 0
+    CLICKS[:] = []
+    _b = OCR_CNT[0]
+    out = None
+    for _ in range(3):                 # 第 1 帧只升级水位, 第 2 帧必须出手
+        app.clicked_cells = {}
+        app.last_cell = 0
+        app._act_gap = 0
+        out = app.step()
+    page, acted, ocr_ran = out
+    check(acted and not ocr_ran,
+          '  %s -> 两帧内出手且本轮没花 OCR (page=%s acted=%s ocr=%s)'
+          % (rel, page.name if page else None, acted, ocr_ran))
+    check(OCR_CNT[0] == _b, '  这段全程没调用过 OCR (实测 %d 次)' % (OCR_CNT[0] - _b))
+    check(any(abs(c[0] - bd[0]) <= 8 and abs(c[1] - bd[1]) <= 8 for c in CLICKS),
+          '  落点打在弹窗 X 上: 徽章=%s 实测=%s' % (bd, CLICKS))
 
 print()
 print('全程 OCR 实际跑了 %d 次' % OCR_CNT[0])
