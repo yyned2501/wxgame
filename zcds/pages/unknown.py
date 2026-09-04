@@ -87,6 +87,17 @@ class UnknownPage(Page):
         img = getattr(ctx.f, 'img', None)
         if img is None:
             return False
+        # 2026-09-04 08:41 新增一档: 上一帧全图 OCR 认出"知道了/好的"这类纯回执按钮
+        # -> 先点它, 有明确按钮就别去猜遮罩(真机那张帧率自适应弹窗就是这么空转 15 分钟)。
+        # 额度由 auto_bot 给, 同一个落点最多试探 MODAL_OK_TRIES 次, 点不掉就交回原表。
+        ok = getattr(ctx, 'modal_ok', None)
+        if ok and getattr(ctx, '_modal_ok_budget', 0) > 0:
+            ctx._modal_ok_budget -= 1
+            if not ctx.acted('modal_ok', gap=6.0):
+                logging.info(f'[未知] 点弹窗回执键 {ok[2]!r} @{ok[:2]} '
+                             f'(剩余额度 {ctx._modal_ok_budget})')
+                ctx.click(*ok[:2])
+            return True
         what, cands = self._candidates(img)
         if not cands:
             self._reset()

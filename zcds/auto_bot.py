@@ -66,6 +66,15 @@ STUCK_ZEROHIT_EVERY = 30         # 首次报警之后每多 30 帧复报一次(�
 # 点色零命中后走全图 OCR 兜底, 连着这么多帧"OCR 认出了页却一次手都动不了" ->
 # 这条路已经证明是死的: 不再花 675ms OCR, 直接交 unknown 走它的出口升级表。
 OCR_ESCALATE_AFTER = 3
+
+# 弹窗"纯回执"按钮(2026-09-04 08:41 定案, 见 pages/unknown.py 出口升级表):
+# 只认点了不会花钱、不会消耗资源的回执文案, 且整条文字必须很短(按钮字样) ——
+# 正文段落里出现"知道了"不算。MODAL_OK_BAD 是价格/领取/广告字样, 一律不碰。
+MODAL_OK_KW = ('知道了', '我已知晓', '我知道了', '好的', '明白')
+MODAL_OK_BAD = ('购买', '充值', '宝石', '钻石', '领取', '广告', '续订', '解锁',
+                '元', '¥', '￥', '$')
+MODAL_OK_MAX_LEN = 6         # 按钮文字长度上限(超过就是正文)
+MODAL_OK_TRIES = 3           # 同一个落点最多试探几次(点不掉就交回原升级表)
 # C 路活锁检测(2026-09-04 真机第 29 轮补): "点了但没进展" 的来回翻。
 #   那一轮 chest_info 指纹掉到 0.8667 -> 面板认不出 -> 出口链认出真 X 把面板关掉 ->
 #   回大厅再点同一行 -> 16s 一圈, 一格箱都开不成, 永远进不了战斗。
@@ -130,6 +139,8 @@ class App:
         self._stuck_sig = None           # 卡页统计: 上一轮的画面签名(28x51 灰度缩略)
         self._stuck = 0                  # 卡页统计: 该页连续零动作轮数
         self._zerohit_run = 0            # 卡页统计 B 路: 点色全表连续零命中帧数(不看签名)
+        self.modal_ok = None           # 最近一次全图 OCR 认出的弹窗回执键 (x, y, 文字)
+        self._modal_ok_budget = 0      # 该落点还剩几次试探额度
         self._ocr_zero = 0               # 连续"OCR 认出页但动不了手"的帧数(到 3 帧就改走 unknown)
         self._clicks = deque(maxlen=FLIP_WINDOW)   # 最近 N 次点击 (页名, 坐标) -> C 路活锁
         self._flip_key = None            # 当前活锁的身份证 (页名组合 + 落点)
@@ -683,6 +694,36 @@ class App:
         except Exception as e:
             logging.warning('[卡页] 存帧失败: %s', e)
 
+    def _find_modal_ok(self):
+        """最近一帧全图 OCR 里找弹窗"纯回执"按钮 -> (x, y, 文字); 没有 -> None
+
+        只认回执, 不认领取/购买: MODAL_OK_BAD 里的字样一个都不许碰(花钱护栏),
+        文字长度 > MODAL_OK_MAX_LEN 一律当正文跳过。取最后一个命中框 = 弹窗最下面
+        那颗按钮(回执键永远在正文之后)。
+        """
+        boxes = getattr(getattr(self, 'f', None), 'boxes', None) or []
+        hit = None
+        for b in boxes:
+            txt = (b.text or '').replace(' ', '')
+            if not txt or len(txt) > MODAL_OK_MAX_LEN:
+                continue
+            if not any(k in txt for k in MODAL_OK_KW):
+                continue
+            if any(k in txt for k in MODAL_OK_BAD):
+                continue
+            hit = (b.cx, b.cy, b.text)
+        return hit
+
+    def _scan_modal_ok(self):
+        """刷新回执键 + 额度: 落点变了才重新给 MODAL_OK_TRIES 次机会"""
+        pos = self._find_modal_ok()
+        if pos is None:
+            self.modal_ok, self._modal_ok_budget = None, 0
+            return
+        if self.modal_ok is None or self.modal_ok[:2] != pos[:2]:
+            self._modal_ok_budget = MODAL_OK_TRIES
+        self.modal_ok = pos
+
     def _flag_flip(self, page, acted):
         """C 路活锁检测: 两个页来回翻 + 同一落点反复点 = 点了没进展.
 
@@ -858,6 +899,7 @@ class App:
                     self.f, ocr_ran = self.vision.ocr(img, force=True)
                     self._text_done = True
                     page, score = detect_ocr(self.pages, self.f)
+                    self._scan_modal_ok()   # 顺手记下弹窗回执键, 供 unknown 的升级表用
                     src = 'ocr' if page.name != self.pages[-1].name else 'unknown'
                     if src == 'ocr':
                         self._save_ocr_shot(page.name, img)   # 白捡一条待标语料

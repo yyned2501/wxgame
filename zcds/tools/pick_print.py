@@ -85,6 +85,9 @@ LABELS = {
     #   底部[白字]点击继续 —— 没有亮紫按钮, 所以 result 的 act() 在这里空转, 整轮卡死 60s。
     #   卡牌美术/数值随卡变 -> 标定域只能用 --region 限到「与卡无关」的底部带, 见 pages/newcard.py。
     'newcard': [],
+    # 2026-09-04 08:26 真机新页: 帧率自适应弹窗(盘外上层,
+    #   黄色[知道了])。语料 = shots/stuck_08*.png 改名而来
+    'fps_popup': [],
     'arena': ['shots/arena_live084600.png', 'shots/arena_live084601.png', 'shots/arena_live084602.png',
               'shots/arena_live084603.png', 'shots/arena_live084604.png', 'shots/arena_live084605.png',
               'shots/arena_live084606.png', 'shots/arena_live084607.png', 'shots/arena_live084608.png',
@@ -162,6 +165,11 @@ def load(name) -> np.ndarray:
 
 def corpus():
     return [(lbl, n, load(n)) for lbl, names in LABELS.items() for n in names]
+
+
+def _corpus_names():
+    """只给 (标签, 帧名), 不 load —— 语料涨到 2200+ 帧后 corpus() 一次要吃 3.8 GB"""
+    return [(lbl, n) for lbl, names in LABELS.items() for n in names]
 
 
 def group_of(label):
@@ -417,15 +425,16 @@ def cmd_stable(args):
     stable 反过来: 只认【本标签所有帧全中 + 其他页一张都不误中】的单元,
     形态数固定为 1; 挑不出来说明这页根本没法用绝对坐标定页, 该换判据而不是硬凑。
     """
-    data = corpus()
-    own_l = [(n, a) for lbl, n, a in data if lbl == args.label]
-    fore_l = [(n, a) for lbl, n, a in data if lbl != args.label]
+    pairs = _corpus_names()
+    own_l = [(n,) for lbl, n in pairs if lbl == args.label]
+    fore_l = [(n,) for lbl, n in pairs if lbl != args.label]
+    _every = max(1, int(getattr(args, 'fore_every', 1) or 1))
     if args.with_dbg:
         # shots_live/dbg_NNN_<page>_<hhmmss>.png 是真机主循环每轮留下的帧, 标签来自当时的判定;
         # 它们【不参与标定】(pick/verify 都不认), 所以是天然的留出集。stable 默认只用标定语料,
         # 加 --with-dbg 就把同标签的留出帧也拉进【必须全中】的集合, 别的标签拉进负样本 ——
         # 2026-09-04 chest_open 就是这么抓出第 6 个单元在 3 张留出帧上整组不中的(17/20 全中)。
-        have = {os.path.basename(n) for _l, n, _a in data}
+        have = {os.path.basename(n) for _l, n in pairs}
         n_skip = 0
         for q in sorted(glob.glob(os.path.join('shots_live', 'dbg_*.png'))):
             m = re.match(r'dbg_\d+_(\w+?)_\d+\.png', os.path.basename(q))
@@ -438,15 +447,22 @@ def cmd_stable(args):
                 # 逼着 stable 报"这页不能靠绝对坐标定页"。unknown 帧两边都不算。
                 n_skip += 1
                 continue
-            (own_l if m.group(1) == args.label else fore_l).append((q, load(q)))
+            (own_l if m.group(1) == args.label else fore_l).append((q,))
         if n_skip:
             print('   (跳过 %d 张 dbg_*_unknown_*: 标签来自当年失败的路由, 不能当负样本)' % n_skip)
     if not own_l:
         print('标签 %s 没有语料' % args.label)
         return 1
     print('[%s] 本页 %d 帧 / 其他页 %d 帧' % (args.label, len(own_l), len(fore_l)))
-    own = np.stack([a for _n, a in own_l]).astype(np.int16)
-    fore = np.stack([a for _n, a in fore_l]).astype(np.int16)
+    if _every > 1:
+        fore_l = fore_l[::_every]          # 异页负样本抽帧(误中率是比例, 抽帧不改变结论)
+    own = np.stack([load(n[0]) for n in own_l]).astype(np.int16)
+    # 🔴 异页帧一律分块 stack: 一次性 stack 实测要 7.04 GiB((2269,1006,552,3) int16),
+    #    这台机器只有 6 GB, 当场 MemoryError。分块后峰值 ~150 MB。
+    FORE_CHUNK = 48
+
+    def _fore_blk(i0, i1):
+        return np.stack([load(n[0]) for n in fore_l[i0:i1]]).astype(np.int16)
     region = (tuple(int(v) for v in args.region.split(',')) if args.region
               else (16, 96, REF[0] - 16, REF[1] - 16))
     offs = OFFSETS if args.cross else [(0, 0)]
@@ -459,8 +475,15 @@ def cmd_stable(args):
     allp = own[:, ys, xs]                                        # (帧, 点, 3)
     ref = ((allp.max(0) + allp.min(0)) / 2).round().astype(np.int16)
     own_u = _unit_matrix(own, ref, pts, per, deg, tol)
-    fore_u = _unit_matrix(fore, ref, pts, per, deg, tol)
-    cnt, rate = own_u.sum(0), fore_u.mean(0)
+    cnt = own_u.sum(0)
+    _hits = np.zeros(len(centers), dtype=np.int64)
+    _nf = 0
+    for _i in range(0, len(fore_l), FORE_CHUNK):
+        _blk = _fore_blk(_i, min(_i + FORE_CHUNK, len(fore_l)))
+        _hits += _unit_matrix(_blk, ref, pts, per, deg, tol).sum(0)
+        _nf += _blk.shape[0]
+        del _blk
+    rate = _hits / float(max(1, _nf))
     pool = np.flatnonzero((cnt == len(own)) & (rate <= args.max_fore))
     print('全 %d 帧稳定且异页误中<=%.2f 的单元: %d / %d'
           % (len(own), args.max_fore, len(pool), len(centers)))
@@ -499,11 +522,15 @@ def cmd_stable(args):
     # 看起来像【选出来的单元其实不稳定】(实测 chest_open 一直 5/30)。
     xy = [(px, py) for px, py, _c in fp]
     om = cp.color_match(own, xy, fpr, deg, tol)
-    fm = cp.color_match(fore, xy, fpr, deg, tol)
     worst = int(om.sum(1).min())
     wi = int(np.argmin(om.sum(1)))
-    best = int(fm.sum(1).max())
-    bi = int(np.argmax(fm.sum(1)))
+    best, bi = 0, 0
+    for _i in range(0, len(fore_l), FORE_CHUNK):
+        _blk = _fore_blk(_i, min(_i + FORE_CHUNK, len(fore_l)))
+        _fm = cp.color_match(_blk, xy, fpr, deg, tol).sum(1)
+        if int(_fm.max()) > best:
+            best, bi = int(_fm.max()), _i + int(np.argmax(_fm))
+        del _blk
     print('整组 %d 点复核: 本页最低 %d/%d (%s) / 异页最高 %.2f (%s)'
           % (len(fp), worst, len(fp), own_l[wi][0], best / len(fp), fore_l[bi][0]))
     print()
@@ -555,6 +582,8 @@ def main():
     q.add_argument('--min-lum', dest='min_lum', type=float, default=0.0)
     q.add_argument('--min-chroma', dest='min_chroma', type=float, default=0.0)
     q.add_argument('--no-cross', dest='cross', action='store_false', help='单点式')
+    q.add_argument('--fore-every', dest='fore_every', type=int, default=1,
+                   help='异页负样本每 N 帧取 1(控内存; 语料 2200+ 帧时建议 8~30)')
     q.add_argument('--with-dbg', dest='with_dbg', action='store_true',
                    help='把 shots_live/dbg_* 真机留出帧也当成本页帧(同标签)或其他页(别的标签)')
     q.set_defaults(cross=True)
