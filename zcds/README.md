@@ -40,6 +40,7 @@ python -X utf8 test_price_guard.py            # 绝不替玩家点付费按钮: 
 python -X utf8 tools\pick_print.py check      # 语料与 LABELS 是否对得上
 python -X utf8 tools\pick_print.py verify     # 点色指纹逐张判定，应 295/295 通过（63 张按设计无指纹：other/arena/压暗引导帧/stuck 取证帧）
 python -X utf8 tools\print_stats.py --dry-run # 重算各页指纹统计，应与注释逐字一致
+python -X utf8 tools\live_audit.py            # 真机证据帧全量体检(2648 张): 指纹 vs 文件名标签对账, 冒出一条没登记的"认错页"就退 1 (见 COLORPRINT.md 33)
 python -X utf8 test_cpu_offline.py            # 主循环离线集成 8 场景（需要 rapidocr）：25 帧只花 1 次 OCR（只剩"连着两帧零命中"那条兜底）
 python -X utf8 test_act_zero_ocr.py           # 动作层零 OCR：result/chest_open/lobby/chest_info/levelup/hero_level 六页逐帧落点表，一调 OCR 当场炸
 python -X utf8 test_battle_loop.py            # 连打 3 场：进战斗页必须清空已点格子
@@ -198,6 +199,7 @@ python -X utf8 test_dim_frame.py               # 压暗闸门：现场帧 battle
   闭环稳定；¥68 月卡弹窗每次走**关闭徽章**点色出口，零 OCR；09:02 / 09:05 / 09:08 三次点[领取]全部**无填充**
   （通道分歧度 4.8~5.1% < 阈值 25%）⇒ 撒手，额度未动、一分没花；战斗档位实测严格按 `50矿>50兵>50问>25>100`。
   本轮**唯一**那条 OCR 兜底帧就是上面这张压暗帧，属于设计内成本。
+- **全量体检**（新增 `tools/live_audit.py`，§33）：闸门不吃 `ocr_*`（标签来自 OCR）和已在语料里的 `dbg_`，那就再来一个**不带筛选**的复核 —— `shots_live/` 里 bot 自己存的 **2648 张**逐张过指纹，实测 **一致 2573 / 设计内压暗盲区 2 / 已登记不一致 19 / 未登记（= 真认错页）0**，14.6 ms/帧（和真机 bot 并行跑）。那 19 张**逐张看过图，全部是文件名标签错、指纹对**：4 张 `ocr_result_*` 其实是新卡页（OCR 把底部的"点击继续"读成 result）、1 张是帧率弹窗盖在结算页上、1 张是英雄等级弹窗盖在宝箱页上、12 张是 lobby 盖着"秘境大冒险"运营弹窗被 OCR 读成 versus、1 张是「攻城重锤」全屏动画盖住 battle；另有 5 张老构建只能记 `unknown` 的帧今天被指纹认了出来。**结论：文件名标签不是真值，所以不抬闸门上界，改成"登记表 + 新增即红"。**
 
 ### 2026-09-04（凌晨）真机第 28~35 轮：**看广告整条链第一次真机跑通**（零 OCR / 零人工）
 
@@ -752,7 +754,7 @@ chest_info(带内宝石 362 -> 付费) -> [拉黑] chest@all 300s -> [主页] �
 | `battle_scan.py` | 战斗回合的颜色扫描（避免整帧 OCR，省 CPU）。`battle_templates.npz` 是旧模板匹配遗留，**现在没有任何代码引用**，可删可进 gitignore |
 | `shots/` | **261 张**标定语料（552x1006，含 2026-09-02/03 真机帧），`tools/pick_print.py` 的 `LABELS` 引用它（**不入库**）；真机取证帧已全部登记（14 张 `stuck_*` 归 `other`），`check` 已归零 |
 | `shots_live/` | 真机跑起来的取证帧（`peek_*` 只读探针 / `dbg_*` 主循环 `--shots`），**不入库** |
-| `tools/` | `pick_print.py`(check/pick/verify) `print_stats.py` `set_low_cpu.ps1` + 逆向工具（il2cppdumper、wxapkg） |
+| `tools/` | `pick_print.py`(check/pick/verify) `print_stats.py` `live_audit.py`(真机证据帧全量复核) `set_low_cpu.ps1` + 逆向工具（il2cppdumper、wxapkg） |
 | `capture/ dec/ game_src/ unity_data/` | 逆向资料：抓包、XYX 解密产物、wasm 解包、Unity 资源（**运行时不依赖，不入库**） |
 | `scratch/` | 一次性脚本/中间产物归档，带 `MANIFEST.tsv` + `restore.py`（把归档搬回原位）+ `relocate.py`，**运行时不依赖**；`scratch/reg_stuck/` = **离线回归**留下的 `stuck_*.png` 取证帧（每跑一次回归就会刷新几张，绝不进语料） |
 | `COLORPRINT.md` | 点色指纹那层的完整说明：怎么标定、怎么加新页、和 mxdzz 的差异 |
