@@ -178,6 +178,15 @@ for p in sorted(glob.glob(os.path.join(D, 'shots', '**', '*.png'), recursive=Tru
     except Exception:
         continue
     n += 1
+    # 三类帧按设计就不该被点色定页, 不能算进"还要花 OCR 的帧":
+    #   ad_*            看广告窗口的取证帧(广告创意每帧都变, 窗口里根本不定页)
+    #   stuck_*         机器人自己上报的卡页证据帧(走的正是零 OCR 出口)
+    #   *_unknown_*     定不出页时存的 dbg 帧(同上, 交 unknown 页处理, 一次 OCR 都不花)
+    # 它们都写在 shots_live/(真机每跑一轮就新增几十张), 混进来的话这个上界会跟着长跑一起长,
+    # 每跑一次真机就红一次 —— 2026-09-04 04:55 真机 R35 之后就是这样(3 -> 5)。
+    base = os.path.basename(p)
+    if base.startswith('ad_') or base.startswith('stuck_') or '_unknown_' in base:
+        continue
     page, _score, _src = route_prints(ALL_PAGES, im)
     if page is not None:
         continue

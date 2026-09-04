@@ -5,12 +5,18 @@
 实测同一个弹窗的关闭徽章在 (455,461) 和 (459,545) 两种高度, 写死的 prints 只对第一 kinds 有效,
 剩下的帧只能每帧跑一次全图 OCR(675ms)才认出弹窗 —— 这就是 test_zero_ocr 里那条 BAD。
 现在: 绝对指纹没全中 -> find_close_badge() 用颜色现量锚点 -> 按偏移(anchor_prints)再试一轮。
-锁死五件事:
+锁死七件事:
   1) 弹窗语料 12 帧全部点色定页, 其中原先要靠 OCR 的那帧现在 src='anchor'
   2) 锚点组平移不变: 把"徽章 + 左边金币排"整块搬到别处, 仍然认成 vip_popup
+     (搬的落点必须在右半边 —— 第 30 轮的位置闸只认真机徽章所在的 cx >= 宽-120)
   3) 异页 0 误中: 全语料 + 真机帧里凡是靠 anchor 定页的, 页面身份必须是 vip_popup
   4) 锚点组只有 5 个点 < SOFT_MIN_PTS(8) -> 差 1 个点不许软命中, 老实交回 OCR 兜底
   5) find_close_badge 对 PIL 截图和语料 ndarray 给同一个答案(主循环吃 PIL, 回归吃 ndarray)
+  6) 第 31 轮第四道闸: 徽章中心 7x7 必是白叉 -> battle 右下那坨"生气表情"气泡(红心)不算徽章;
+     同时格子从 12 做到 8, 把 X 和右边一列红图标分开, 竞技场礼包弹窗的 (453,369) 才认得出
+  7) 竞技场礼包弹窗(¥68)与月卡弹窗共用"徽章 + 左边黄色标题横幅" -> 本来就是同一类付费
+     弹窗: 2026-09-04 把它从语料 other 组改标进 vip_popup 组(标签 vip_gift)。认成 vip_popup
+     之后 act() 只会点关闭徽章 = 我们要的出口, 还省掉一次全图 OCR + 一轮瞎点
 
 用法(游戏目录): python -X utf8 test_anchor_print.py      # 退出码 0 = 全通过
 """
@@ -36,6 +42,12 @@ from pages.base import (SOFT_MIN_PTS, anchor_points, find_close_badge,
 from colorprint import print_score
 
 VIP = [p for p in ALL_PAGES if p.name == 'vip_popup'][0]
+# 「竞技场4礼包 ¥68」弹窗(第 31 轮真机卡死 2 分钟的那张): 徽章在 (453,369),
+# 徽章左边同样是一条黄色标题横幅 -> 与月卡弹窗共用 vip_popup 的锚点组。
+# 这不是撞车, 是同一类页面: pages/vip_popup.py 的语义就是"会员/礼包/优惠弹窗, 只关不买",
+# act() 只会点关闭徽章。所以 2026-09-04 把它从语料 other 组改标成 vip_gift(同组),
+# 让点色层直接认页, 而不是每帧全图 OCR 判 unknown 再走出口链瞎点。
+GIFT_POPUPS = ('stuck_015553.png', 'stuck_022832.png')
 FAILS = []
 
 
@@ -112,24 +124,33 @@ def main():
     # ---- 2) 平移不变 ----
     print('[2] 锚点相对指纹平移不变')
     base = by_name('vip_popup_live105350')
-    for dst in ((300, 300), (200, 700), (430, 240)):
+    # 落点全在右半边: 第 30 轮起 find_close_badge 只认 cx >= 宽-120(关闭键恒在右上角),
+    # 搬到 (300,300)/(200,700) 那种位置**按设计**就不该再被认出来 —— 见下面 [2b]
+    for dst in ((470, 300), (500, 620), (440, 180)):
         f = badge_frame(base, dst)
         chk(find_close_badge(f) == dst, '徽章搬到 %s 后仍被颜色找到' % (dst,))
         page, score, src = route_prints(ALL_PAGES, f)
         chk(page is VIP and src == 'anchor',
             '%s -> %s %s (纯色底 + 绝对坐标全不对, 只有锚点组能中)' % (dst, page and page.name, src))
+    print('[2b] 位置闸: 左半边的红底白叉不是关闭键')
+    for dst in ((300, 300), (200, 700)):
+        chk(find_close_badge(badge_frame(base, dst)) is None,
+            '徽章搬到左半边 %s -> None (第 30 轮: battle 左上那坨红装饰就是这样挡掉的)' % (dst,))
 
     # ---- 3) 异页 0 误中 ----
     print('[3] 全语料 + 真机帧: anchor 只许命中 vip_popup')
     rows = list(corpus_rows())
     used, wrong = [], []
     for grp, kind, name, arr in rows:
-        page, score, src = route_prints(ALL_PAGES, arr)
-        if src == 'anchor':
+        page, score, src_ = route_prints(ALL_PAGES, arr)
+        if src_ == 'anchor':
             used.append(name)
             if grp != 'vip_popup':
                 wrong.append((name, grp, page.name))
     chk(not wrong, '误中 %s' % (wrong,))
+    chk(all(n in used for n in GIFT_POPUPS),
+        '竞技场礼包弹窗靠锚点定页(已改标进 vip_popup 组, 出口=点关闭徽章): %s'
+        % [n for n in GIFT_POPUPS if n not in used])
     chk(len(used) >= 1, '%d 帧靠 anchor 定页, 全部是弹窗帧' % len(used))
     # 只有"锚点组"参评(绝对指纹那是另一回事, ask_battle 本来就靠它定页)
     ask = by_name('ask_battle')
@@ -147,11 +168,11 @@ def main():
 
     # ---- 4) 差 1 点不许软命中 ----
     print('[4] 锚点组不参与软命中(点数 < SOFT_MIN_PTS=%d)' % SOFT_MIN_PTS)
-    f = badge_frame(base, (300, 300))
+    f = badge_frame(base, (470, 300))
     chk(route_prints(ALL_PAGES, f)[2] == 'anchor', '动刀前先确认能全中')
     for dx, dy in ((-30, 0), (-60, -20)):
         g = f.copy()
-        cx, cy = 300 + dx, 300 + dy
+        cx, cy = 470 + dx, 300 + dy
         g[cy - 3:cy + 4, cx - 3:cx + 4] = np.array([0x21, 0x33, 0x45], dtype=np.uint8)
         page, score, src = route_prints(ALL_PAGES, g)
         chk(src is None and page is not VIP,
@@ -171,6 +192,21 @@ def main():
         route_prints(ALL_PAGES, blank)
     ms = (time.time() - t0) * 1000 / 20
     chk(ms < 40.0, '绝对指纹全失败的一帧(含找锚点) %.1f ms << 全图 OCR 675 ms' % ms)
+
+    # ---- 6) 第 31 轮: cell 12 -> 8 + 中心白叉闸 ----
+    print('[6] 徽章闸: 细格子分开粘连红块, 中心白叉分清表情气泡')
+    gift_arr = arr_of(os.path.join(ROOT, 'shots', 'stuck_022832.png'))
+    chk(find_close_badge(gift_arr) == (453, 369),
+        '竞技场礼包弹窗真 X -> %s (cell=12 时它与右边红图标并成 48x60 被尺寸闸误杀)'
+        % (find_close_badge(gift_arr),))
+    chk(find_close_badge(gift_arr, cell=12) is None,
+        '同一帧退回 cell=12 仍然找不到 —— 证明修的是格子粗细, 不是碰巧')
+    emo = os.path.join(ROOT, 'shots_live', 'dbg_017_battle_035148.png')
+    if os.path.exists(emo):
+        chk(find_close_badge(arr_of(emo)) is None,
+            'battle 右下生气表情气泡(中心红心)不算徽章')
+    else:
+        chk(True, '表情气泡帧不在, 跳过 (真分界证据在 scratch/tmp/cwx.py)')
 
     print('')
     if FAILS:

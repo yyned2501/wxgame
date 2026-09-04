@@ -18,6 +18,7 @@
   5) 复核: 本簇每张全中 + 其他页零误中 + 打印 margin(其他页最高命中比例, 越低越安全)
 """
 import argparse
+import re
 import glob
 import math
 import os
@@ -29,7 +30,8 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-import colorprint as cp                                              # noqa: E402
+import colorprint as cp
+from colorprint import rgb2c                                              # noqa: E402
 
 REF = cp.REF_SIZE
 OFFSETS = [(0, 0), (2, 0), (-2, 0), (0, 2), (0, -2)]                 # 十字单元
@@ -63,6 +65,11 @@ LABELS = {
                    'shots/chest_info_paid_040458'],
     'vip_popup': ['shots/ask_battle', 'shots/live_now', 'shots/now_state', 'shots/p0'],
     'vip_month': ['shots/st_2', 'shots/vip_month_0003'],                       # 月卡礼包弹窗(vip_popup 的另一种形态)
+    # 2026-09-04 第 31 轮改标: 「竞技场4礼包 ¥68」弹窗(真机 01:55 / 02:28 各卡过一次)。
+    #   它和月卡弹窗共用同一条 关闭徽章 + 黄色标题横幅 -> vip_popup.anchor_prints 命中它,
+    #   而 vip_popup.act() 只会点关闭徽章(绝不点购买) —— 正是我们要的出口, 所以它属于本页。
+    #   登记前它落在 other 组: 点色层不许认页 -> 每帧全图 OCR 判 unknown -> 靠出口链瞎点脱身。
+    'vip_gift': ['shots/stuck_015553', 'shots/stuck_022832'],
     'matching': ['shots/sm_after'],
     'chest_open': ['shots/chest_open_claim', 'shots/chest_open_close', 'shots/chest_open_reward'],
     'versus': ['shots/versus_live005730.png'],
@@ -130,7 +137,8 @@ for _p in sorted(glob.glob(os.path.join(ROOT, 'shots', 'stuck_*.png'))):
 # arena(竞技场晋级页)是刻意不标指纹的: 版面内容(地图美术/横幅文字/奖励图标)全随等级变,
 #   硬标只会标在文字像素上 —— 正是 2026-09-03 lobby 改版失效的那个坑。它的出口是
 #   [左下角青色返回箭头]这个点色判据, 见 pages/base.py back_arrow_pos。
-GROUPS = {'vip_popup': ['vip_popup', 'vip_month'], 'other': ['other', 'arena', 'lobby_dim']}
+GROUPS = {'vip_popup': ['vip_popup', 'vip_month', 'vip_gift'],
+          'other': ['other', 'arena', 'lobby_dim']}
 
 _cache = {}
 
@@ -399,6 +407,116 @@ def cmd_verify(args):
     return 0 if bad == 0 else 2
 
 
+# ---------------------------------------------------------------- stable
+def cmd_stable(args):
+    """跨本标签全部帧都稳定、且异页零误中的十字单元 -> 一种形态通吃整页
+
+    为什么还要另一个模式(2026-09-04 真机): pick 先按像素差把同页帧【分形态】,
+    再在每个形态里挑"最亮最扎眼"的点 —— 于是它会把聚光灯/白字/奖励图标这类
+    "这一批帧里恰好一致、换一批就变"的像素选进指纹(result 页 19 形态血案)。
+    stable 反过来: 只认【本标签所有帧全中 + 其他页一张都不误中】的单元,
+    形态数固定为 1; 挑不出来说明这页根本没法用绝对坐标定页, 该换判据而不是硬凑。
+    """
+    data = corpus()
+    own_l = [(n, a) for lbl, n, a in data if lbl == args.label]
+    fore_l = [(n, a) for lbl, n, a in data if lbl != args.label]
+    if args.with_dbg:
+        # shots_live/dbg_NNN_<page>_<hhmmss>.png 是真机主循环每轮留下的帧, 标签来自当时的判定;
+        # 它们【不参与标定】(pick/verify 都不认), 所以是天然的留出集。stable 默认只用标定语料,
+        # 加 --with-dbg 就把同标签的留出帧也拉进【必须全中】的集合, 别的标签拉进负样本 ——
+        # 2026-09-04 chest_open 就是这么抓出第 6 个单元在 3 张留出帧上整组不中的(17/20 全中)。
+        have = {os.path.basename(n) for _l, n, _a in data}
+        n_skip = 0
+        for q in sorted(glob.glob(os.path.join('shots_live', 'dbg_*.png'))):
+            m = re.match(r'dbg_\d+_(\w+?)_\d+\.png', os.path.basename(q))
+            if not m or os.path.basename(q) in have:
+                continue
+            if m.group(1) == 'unknown':
+                # dbg 的标签来自【当时的路由】, 而 unknown 恰恰意味着"当时没认出来":
+                # 实测 dbg_003_unknown_073932.png 与 shots/levelup_live073932.png 逐像素相同
+                # (maxdiff 0) —— 它就是 levelup 页。把它当异页负样本会造出假矛盾,
+                # 逼着 stable 报"这页不能靠绝对坐标定页"。unknown 帧两边都不算。
+                n_skip += 1
+                continue
+            (own_l if m.group(1) == args.label else fore_l).append((q, load(q)))
+        if n_skip:
+            print('   (跳过 %d 张 dbg_*_unknown_*: 标签来自当年失败的路由, 不能当负样本)' % n_skip)
+    if not own_l:
+        print('标签 %s 没有语料' % args.label)
+        return 1
+    print('[%s] 本页 %d 帧 / 其他页 %d 帧' % (args.label, len(own_l), len(fore_l)))
+    own = np.stack([a for _n, a in own_l]).astype(np.int16)
+    fore = np.stack([a for _n, a in fore_l]).astype(np.int16)
+    region = (tuple(int(v) for v in args.region.split(',')) if args.region
+              else (16, 96, REF[0] - 16, REF[1] - 16))
+    offs = OFFSETS if args.cross else [(0, 0)]
+    centers, pts, per = _units(region, args.step, args.cross)
+    deg, tol = args.degree, args.pos_tol
+    # 判色基准用【跨帧中点】而不是第一帧: 第一帧可能正好是这批帧里最偏的一端,
+    # 拿它当基准量出来的"稳", 换成中点基准就不稳了(实测 chest_open 30 点只中 5 点)。
+    ys = np.fromiter((y for _x, y in pts), dtype=np.intp, count=len(pts))
+    xs = np.fromiter((x for x, _y in pts), dtype=np.intp, count=len(pts))
+    allp = own[:, ys, xs]                                        # (帧, 点, 3)
+    ref = ((allp.max(0) + allp.min(0)) / 2).round().astype(np.int16)
+    own_u = _unit_matrix(own, ref, pts, per, deg, tol)
+    fore_u = _unit_matrix(fore, ref, pts, per, deg, tol)
+    cnt, rate = own_u.sum(0), fore_u.mean(0)
+    pool = np.flatnonzero((cnt == len(own)) & (rate <= args.max_fore))
+    print('全 %d 帧稳定且异页误中<=%.2f 的单元: %d / %d'
+          % (len(own), args.max_fore, len(pool), len(centers)))
+    if not len(pool):
+        print('!! 一个都没有 —— 这页不能靠绝对坐标定页, 别硬凑指纹')
+        return 1
+    cs = np.stack([own[:, c[1], c[0]] for c in centers], 1)          # (帧, 单元, 3)
+    rng = (cs.max(0) - cs.min(0)).max(1).astype(int)
+    med = ref.reshape(len(centers), per, 3)[:, 0]                    # 中心点的中点色
+    lum = med.mean(1)
+    chr_ = (med.max(1) - med.min(1)).astype(int)
+    keep = pool[(lum[pool] >= args.min_lum) & (chr_[pool] >= args.min_chroma)]
+    keep = keep[np.lexsort((-lum[keep], rng[keep]))]                  # 先最稳, 再最亮
+    sel = []
+    for k in keep:
+        x, y = centers[k]
+        if any((x - centers[j][0]) ** 2 + (y - centers[j][1]) ** 2 < float(args.min_sep) ** 2
+               for j in sel):
+            continue
+        sel.append(k)
+        if len(sel) == args.n:
+            break
+    print('选中 %d 个单元(两两相距 >= %d px):' % (len(sel), args.min_sep))
+    fp = []
+    for k in sel:
+        x, y = centers[k]
+        c0 = int(rgb2c(med[k]))
+        print('   (%3d,%3d) #%06X 亮度%5.1f 饱和%4d 跨帧极差%-3d 异页误中 %.4f'
+              % (x, y, c0, lum[k], chr_[k], rng[k], rate[k]))
+        fp.extend((x + dx, y + dy, int(rgb2c(ref[k * per + n])))
+                  for n, (dx, dy) in enumerate(offs))
+    fpr = np.stack([cp.c2rgb(c) for _x, _y, c in fp]).astype(np.int16)
+    # 复核坐标必须从 fp 自己解看: 之前写成 [(x, y) for x, _y, _c in fp]
+    # 时 y 不是解包出来的 _y, 而是外层 for k 循环残留的最后一个单元 y,
+    # 结果 30 个点全被压到同一行去判色 -> 复核永远只有最后一个单元能中,
+    # 看起来像【选出来的单元其实不稳定】(实测 chest_open 一直 5/30)。
+    xy = [(px, py) for px, py, _c in fp]
+    om = cp.color_match(own, xy, fpr, deg, tol)
+    fm = cp.color_match(fore, xy, fpr, deg, tol)
+    worst = int(om.sum(1).min())
+    wi = int(np.argmin(om.sum(1)))
+    best = int(fm.sum(1).max())
+    bi = int(np.argmax(fm.sum(1)))
+    print('整组 %d 点复核: 本页最低 %d/%d (%s) / 异页最高 %.2f (%s)'
+          % (len(fp), worst, len(fp), own_l[wi][0], best / len(fp), fore_l[bi][0]))
+    print()
+    print('# ---- 粘进 pages/%s.py ----' % args.label)
+    print('    prints = (')
+    print('        (   # 形态: %s 全部 %d 帧通吃(tools/pick_print.py stable)' % (args.label, len(own)))
+    for i in range(0, len(fp), 3):
+        print('            ' + ' '.join('[%d, %d, 0x%06X],' % p for p in fp[i:i + 3]))
+    print('        ),')
+    print('    )')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description='点色指纹标定/校验')
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -424,10 +542,27 @@ def main():
                    help='孤立帧不参与选指纹(旧行为)')
     p.add_argument('--no-cross', dest='cross', action='store_false', help='单点式(mxdzz 原味)')
     p.set_defaults(cross=True)
+    q = sub.add_parser('stable')
+    q.add_argument('--label', required=True, choices=list(LABELS))
+    q.add_argument('-n', type=int, default=6, help='最多几个十字单元')
+    q.add_argument('--region', help='x0,y0,x1,y1 (默认全图留边)')
+    q.add_argument('--step', type=int, default=4)
+    q.add_argument('--degree', type=float, default=85)
+    q.add_argument('--pos-tol', dest='pos_tol', type=int, default=1)
+    q.add_argument('--min-sep', dest='min_sep', type=int, default=90, help='单元间最小距离')
+    q.add_argument('--max-fore', dest='max_fore', type=float, default=0.0,
+                   help='允许的其他页误中帧比例(默认 0 = 一张都不许误中)')
+    q.add_argument('--min-lum', dest='min_lum', type=float, default=0.0)
+    q.add_argument('--min-chroma', dest='min_chroma', type=float, default=0.0)
+    q.add_argument('--no-cross', dest='cross', action='store_false', help='单点式')
+    q.add_argument('--with-dbg', dest='with_dbg', action='store_true',
+                   help='把 shots_live/dbg_* 真机留出帧也当成本页帧(同标签)或其他页(别的标签)')
+    q.set_defaults(cross=True)
     v = sub.add_parser('verify')
     v.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
-    return {'check': cmd_check, 'pick': cmd_pick, 'verify': cmd_verify}[a.cmd](a)
+    return {'check': cmd_check, 'pick': cmd_pick, 'verify': cmd_verify,
+            'stable': cmd_stable}[a.cmd](a)
 
 
 if __name__ == '__main__':

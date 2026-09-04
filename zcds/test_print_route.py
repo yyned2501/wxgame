@@ -295,17 +295,45 @@ def main():
         p, sc, src = route_prints(ALL_PAGES, img0)
         check(p is pg and not is_soft(src),
               '%s(%s) 原图应点色全中, 实际 %s %s %.3f' % (base, lbl, p and p.name, src, sc))
-        crit = next((xy for xy in pg.fingerprints()[0] if pg.print_score(blotch(img0, xy)) < 1.0), None)
+        # 只遮"所有形态共有"的点: 多形态页(battle)故意让形A/形B 各吃一半局面
+        # (推条蓝红分界会左右扫), 遮掉某一形独有的点、另一形照常全中 = 设计目标,
+        # 拿 fingerprints()[0] 的前两点当"页面身份"会上双形态就假红。
+        forms = pg.fingerprints()
+        core = [xy for xy in forms[0]
+                if all(any((q[0], q[1]) == (xy[0], xy[1]) for q in f) for f in forms[1:])]
+        check(len(core) >= 2,
+              '%s(%s) 没有 >=2 个跨形态公共点, 没法验软命中门限(共 %d 个)' % (base, lbl, len(core)))
+        crit = next((xy for xy in core if pg.print_score(blotch(img0, xy)) < 1.0), None)
         check(crit is not None, '%s 找不到「遮住就不全中」的关键点, 该页指纹形同虚设?' % base)
         if crit:
             p, sc, src = route_prints(ALL_PAGES, blotch(img0, crit))
             check(p is pg and is_soft(src),
                   '%s(%s) 遮 1 个点应软命中(不许跑 OCR), 实际 %s %s %.3f'
                   % (base, lbl, p and p.name, src, sc))
-            others = [xy for xy in pg.fingerprints()[0] if xy != crit]
+            others = [xy for xy in core if xy != crit]
             p, sc, src = route_prints(ALL_PAGES, blotch(blotch(img0, crit), others[0]))
             check(p is None,
                   '%s(%s) 遮 2 个点该交 OCR 兜底, 实际 %s %s %.3f' % (base, lbl, p and p.name, src, sc))
+    print('[11] 指纹点不许标在文字上(R29 血泪: 开箱面板换个箱子名 -> 指纹烂掉 -> 活锁 40 分钟)')
+    # 2026-09-04 真机: 大厅那一格是[青铜宝箱], 语料里只有木箱/铁箱 -> 标题字形变了 ->
+    # 旧 chest_info 指纹 13/15 掉出软命中门槛 -> 面板认不出 -> 出口链自己点 X 关面板 -> 活锁。
+    # 重标后的 15 点全落在面板固定件上(蓝横幅/传奇卡/紫机身): 4 张青铜真值帧必须点色全中,
+    # 并且**任何点都不许落在标题行 y148..195 / 卡名行 y440..472 这两条文字横带里**。
+    n11 = 0
+    for base in ('chest_info_live011554', 'chest_info_live012039',
+                 'chest_info_live012053', 'chest_info_live012122'):
+        im = Image.open(pp.img_path(base)).convert('RGB')
+        p, sc, src = route_prints(ALL_PAGES, im)
+        check(p is not None and p.name == 'chest_info' and not is_soft(src) and sc >= 1.0,
+              '%s 青铜宝箱面板须点色全中 chest_info (实际 %s %s %.3f)'
+              % (base, p and p.name, src, sc))
+        n11 += 1
+    ci = [q for q in ALL_PAGES if q.name == 'chest_info'][0]
+    TEXT_BANDS = [(148, 195), (440, 472)]        # 标题行 / 稀有度卡名行
+    bad = [xy for xy in ci.fingerprints()[0] if any(a <= xy[1] <= b for a, b in TEXT_BANDS)]
+    check(not bad, 'chest_info 指纹不得有点落在文字横带 %s 内, 越界点 %s' % ((TEXT_BANDS,), bad))
+    print('    %d 张青铜真值帧全中 + %d 个指纹点零越界(没标在字上)'
+          % (n11, len(ci.fingerprints()[0])))
     print('')
     if FAILS:
         print('不通过 %d 项:' % len(FAILS))

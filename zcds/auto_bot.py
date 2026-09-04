@@ -22,17 +22,21 @@ CPU 优化:
   因此机器人启动后每轮都会把窗口钉回基准尺寸(可 --no-resize 关闭).
 """
 import argparse, logging, os, subprocess, sys, time
+from collections import Counter, deque
 from datetime import datetime
 
 import game_utils as g
 from colorprint import REF_SIZE
-from config import PAGE_CFG
+from config import AD_FOCUS, PAGE_CFG
 from vision import Vision, ScreenFeature
 from pages import ALL_PAGES
 from pages.base import (AD_PILL_LEFT_TOL, AD_PILL_LOW_HOLD, AD_PILL_SHRINK, AD_PILL_SHRINK_PCT,
-                        NAV_LOBBY_TAB, ad_close_pos, ad_pill_state, back_arrow_pos, detect_ocr,
-                        find_close_badge, guide_targets, is_soft, is_transition, nav_present,
-                        nav_tab_cx, route_prints)
+                        AD_BLACK_MAX_FRAC, CHEST_BLOCK_ALL, NAV_LOBBY_TAB,
+                        AD_DIVERGE_FRAC, ad_black_frac, ad_claim_pos, ad_close_pos,
+                        ad_pill_state, screen_div_frac,
+                        back_arrow_pos, detect_ocr, find_close_badge, guide_targets, is_soft,
+                        is_transition, nav_present, nav_tab_cx, route_prints)
+from pages.lobby import CHEST_SLOTS
 from pages.unknown import STUCK_DIR_OFFLINE, frame_sig
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +66,18 @@ STUCK_ZEROHIT_EVERY = 30         # 首次报警之后每多 30 帧复报一次(�
 # 点色零命中后走全图 OCR 兜底, 连着这么多帧"OCR 认出了页却一次手都动不了" ->
 # 这条路已经证明是死的: 不再花 675ms OCR, 直接交 unknown 走它的出口升级表。
 OCR_ESCALATE_AFTER = 3
+# C 路活锁检测(2026-09-04 真机第 29 轮补): "点了但没进展" 的来回翻。
+#   那一轮 chest_info 指纹掉到 0.8667 -> 面板认不出 -> 出口链认出真 X 把面板关掉 ->
+#   回大厅再点同一行 -> 16s 一圈, 一格箱都开不成, 永远进不了战斗。
+#   A 路数不到它(每轮都 acted=True, 而且画面一直在变), B 路也数不到它(大厅帧点色全中,
+#   _zerohit_run 每一圈都被清零) -> 三条判据里只有"同一落点被反复点"看得见这件事。
+#   判据: 最近 FLIP_WINDOW 次点击里, 同一个坐标出现 >= FLIP_REPEAT 次, 且这些点击
+#         横跨 >= FLIP_PAGE_MIN 个页名(= 两个页来回翻, 而不是单页原地重试)。
+FLIP_WINDOW = 8
+FLIP_REPEAT = 4
+FLIP_PAGE_MIN = 2
+FLIP_ALARM_EVERY = 6        # 同一个活锁每判 6 次复报一次, 别每轮刷日志
+FLIP_BLOCK = 300            # 活锁里如果反复点的是大厅宝箱格 -> 整行拉黑 300s(= 3~4 场战斗)
 
 
 def setup_logging():
@@ -74,7 +90,7 @@ class App:
     """主循环 + 页面执行上下文(ctx)"""
 
     def __init__(self, max_battles=0, dry_run=False, low_cpu=True, affinity_cores=0,
-                 resize=True, max_steps=0, shots=0, ad_probe=0):
+                 resize=True, max_steps=0, shots=0, ad_probe=0, ad_focus=None):
         self.max_battles = max_battles
         self.dry_run = dry_run
         self.low_cpu = low_cpu
@@ -84,6 +100,10 @@ class App:
         self.shots = shots      # >0: 每轮存帧 -> shots_live/dbg_*.png (取证用)
         self.ad_probe = ad_probe   # >0: 结算页没认到黄色[领取]时存帧 -> scratch/adprobe/ (排查广告额度用)
         self._adprobe_n = 0
+        # 点[领取]前抢前台(微信激励视频在后台可能不给量) —— 开关在 config.AD_FOCUS
+        self.ad_focus = AD_FOCUS if ad_focus is None else ad_focus
+        self.ad_screen = True              # 广告密拍期同时抓屏幕像素(离线回归自动跳过)
+        self._fg_state = None            # 上次已知"我们是不是前台", 只在变化时打日志
         self.steps = 0
         self._win_warn = 0
         self.hwnd = None
@@ -111,6 +131,9 @@ class App:
         self._stuck = 0                  # 卡页统计: 该页连续零动作轮数
         self._zerohit_run = 0            # 卡页统计 B 路: 点色全表连续零命中帧数(不看签名)
         self._ocr_zero = 0               # 连续"OCR 认出页但动不了手"的帧数(到 3 帧就改走 unknown)
+        self._clicks = deque(maxlen=FLIP_WINDOW)   # 最近 N 次点击 (页名, 坐标) -> C 路活锁
+        self._flip_key = None            # 当前活锁的身份证 (页名组合 + 落点)
+        self._flip_hits = 0              # 同一个活锁连续判定次数
         # 看广告窗口(2026-09-03 12:47 定案): _ad_until 非 0 = 窗口开着, 主循环交 _ad_tick 管
         self._ad_t0 = 0.0                # 本轮广告开始时刻
         self._ad_until = 0.0             # 窗口硬上限时刻(= 开始 + AD_WATCH_TOTAL)
@@ -124,9 +147,28 @@ class App:
         self._ad_closing = False         # 已点过[关闭], 正在确认它真的关掉了
         self._ad_close_t = 0.0
         self._ad_retry_at = 0.0
+        self._ad_black_t = 0.0           # 最近一次看到黑屏广告帧的时刻(0 = 没见过)
 
     # ---- 上下文工具(供页面调用) ----
+    def ensure_foreground(self, why=''):
+        """点[领取]之前把游戏窗口带到前台 —— 微信激励视频在后台可能根本不给量。
+
+        真机依据见 config.AD_FOCUS 的注释(前台那一次 12s 后盖上黑屏广告 / 后台 6 次全无量)。
+        只在"前后台状态变了"时打一行日志, 免得每场都刷。dry_run 下什么都不做:
+        离线回归没有真窗口, 真去抢前台会把测试进程顶到台面上。
+        """
+        if not self.ad_focus or self.dry_run or not self.hwnd:
+            return True
+        ok = bool(g.focus_window(self.hwnd))
+        if ok != self._fg_state:
+            self._fg_state = ok
+            logging.info(f'[广告] {why}: 点前激活游戏窗口 -> '
+                         + ('已在前台' if ok else '抢不到前台(系统前台锁), 广告可能不给量'))
+        return ok
+
     def click(self, x, y):
+        # C 路活锁的原料: 谁在什么坐标点了一下(dry_run 也记, 回归脚本才测得到)
+        self._clicks.append((self.cur_page or '?', (int(x), int(y))))
         if self.dry_run:
             logging.info(f'[dry] 点击 ({x},{y})')
             return
@@ -178,19 +220,56 @@ class App:
     AD_WATCH_TOTAL = 100.0    # 一条广告最多占用主循环这么久, 超了撒手(防死等)
     AD_CLOSE_RETRY = 3.0      # 点过[关闭]后每这么多秒复检: 还赖在广告页就再点一次
     AD_CLOSE_CONFIRM = 12.0   # 关闭动作最多盯这么久(正常下一帧就已经离开广告页)
-    AD_NOT_AD_AT = 4.0        # 等了这么久还是"游戏自己的页" -> 认定根本没进广告, 撒手
+    AD_NOT_AD_AT = 4.0        # 等了这么久、且已经硬命中**别的**游戏页 -> 认定没进广告, 撒手
+    AD_NOT_AD_SAME_AT = 25.0  # 一直停在点[领取]时那一页(视频在加载)时, 最多等这么久才撒手
+    AD_BLACK_GRACE = 6.0        # 见过黑屏帧之后, 这么多秒内不按"没进广告"撒手
+    AD_DIVERGE_FRAC = AD_DIVERGE_FRAC      # 屏幕/PrintWindow 分歧度阈值, 见 pages.base
+    AD_CLAIM_RETRY = 1          # 点[领取]后一直停在原页、等满 AD_NOT_AD_SAME_AT 仍没有广告顶栏
+                                # -> 再点一次[领取](真机 R35: 04:43 那次在结算页干等 28s 广告始终没来,
+                                #    而 04:22 那次一次就中 —— 无填充时再点一次是免费的, 不烧"可用 x/8")
+    AD_SHOT_MAX = 14          # 一次广告窗口最多存几帧取证(见 _ad_sample)
+    AD_SHOT_EVERY = 4.0       # 密拍结束后每这么多秒一帧
+    AD_SHOT_DENSE = 0.5       # 前 AD_SHOT_DENSE_N 帧每这么多秒一张: 广告盖上/退回游戏页
+                              # 都发生在点[领取]后的头几秒, 4s 一张会整段漏掉(真机 R34 就是这样)
+    AD_SHOT_DENSE_N = 9       # 密拍到第几张为止(arm+1s 起, 覆盖到 ~5s)
+    AD_TICK_POLL = 0.5        # 看广告窗口里主循环一跳多久(原来跟着 PAGE_CFG 的 3s, 密拍形同虚设)
+                              # 实测一帧 grab+关闭位+药丸+黑屏 = 37ms, 0.5s 一跳只吃掉单核 ~7%;
+                              # 所有广告判据(AD_NOT_AD_AT / BLACK_GRACE / LOW_HOLD / WATCH_MIN)
+                              # 都是按**秒**算的, 加密只会更快更准, 不会提前点[关闭]。
 
     def start_ad_watch(self, why=''):
         """arm 看广告窗口: result 点完黄色[领取]后调用, 或主循环撞见广告页时调用"""
         now = time.time()
         self._ad_t0, self._ad_until = now, now + self.AD_WATCH_TOTAL
+        # 记下 arm 时站在哪一页: _ad_tick 靠它区分"广告在加载(还是这页)"和"已经跑到别的页(广告没来)"
+        self._ad_from = self.cur_page
         self._ad_pill_max, self._ad_logged = 0, now
         self._ad_white_max, self._ad_pill_left, self._ad_low_t0, self._ad_pill = 0, None, 0.0, ()
         self._ad_seen, self._ad_closing = False, False
+        self._ad_shot_next, self._ad_shot_n = now + 1.0, 0
+        # 每场重置黑屏时间戳: 不然第二次看广告时 _ad_black_t 还是上一场的旧值，
+        # 那行"黑屏帧 = 正在放广告"的日志永远不会再打印(只影响可观察性，不影响判据)。
+        self._ad_black_t = 0.0
         self._ad_close_t = self._ad_retry_at = 0.0
+        self._ad_claim_retry = 0
         logging.info(f'[广告] 开始看广告({why}): 期间不定页/不跑 OCR/不点击; '
                      f'放完判据 = 状态药丸缩窄 或 等满 {self.AD_WATCH_MAX:.0f}s; '
                      f'最长 {self.AD_WATCH_TOTAL:.0f}s')
+
+    def _ad_overlay_frac(self, img):
+        """只在"准备撒手/重试"的那一刻问一次屏幕通道: 现在盖在窗口上的东西 PrintWindow 看得见吗?
+
+        取一次 BitBlt 只要 ~25ms, 不进常规密拍(密拍段另存 ads_*.png 是另一回事);
+        屏幕通道自检不通过 / dry_run / 抓失败 -> 返回 None, 调用方按旧口径处理(不把新判据当硬闸门)。
+        """
+        if not self.ad_screen or not self.hwnd or self.dry_run:
+            return None
+        try:
+            sc = g.capture_screen(self.hwnd)
+        except Exception as e:
+            logging.warning(f'[广告] 屏幕通道抓取失败: {e}')
+            return None
+        return screen_div_frac(img, sc)
 
     def _end_ad_watch(self):
         self._ad_until = 0.0
@@ -212,6 +291,7 @@ class App:
         pos = ad_close_pos(img)
         if pos is not None:
             self._ad_seen = True
+        self._ad_sample(img, pos, now)
         # 1) 已经点过一次[关闭]: 还赖在广告页就重补一次, 认不出广告页了就交回主循环
         if self._ad_closing:
             if pos is None:
@@ -229,13 +309,59 @@ class App:
                 self.click(*pos)
                 return 'acted'
             return 'wait'
-        # 2) 压根没进广告(点[领取]没命中 / 弹的是别的窗): 别把主循环锁死在这
+        # 2) 压根没进广告(点[领取]没跳转 / 弹的是别的窗): 别把主循环锁死在这。
+        #    分两档 —— "还停在点[领取]那一页"和"已经跑到别的页"完全不是一回事:
+        #      · 硬命中**别的**游戏页: 那一页已经盖在结算页上面了, 广告不可能还在后面加载
+        #        -> 等满 AD_NOT_AD_AT 就撒手(真机 R29~R32 的 18 次里有 13 次是这一档);
+        #      · 还停在**点[领取]时那一页**: 微信激励视频冷启动要 5~15s, 这期间画面就是原页,
+        #        4s 撒手会把真广告判成没进广告、白丢一次奖励 -> 放宽到 AD_NOT_AD_SAME_AT。
+        # 2a) 黑屏帧 = 广告正在放: PrintWindow 抓不到视频层, 整屏只剩顶部一条 chrome,
+        #     实测真广告帧非黑像素仅 5~6%(判据与阈值来路见 pages.base.AD_BLACK_MAX_FRAC)。
+        #     顶栏没认出来也只是"这家 SDK 的 chrome 长得不一样", 绝不能当"没进广告"撒手 ——
+        #     撒手后主循环会立刻去点别的地方 = 自己把广告打断 = 奖励作废。
+        #     但不给永久免检: 游戏自己的黑屏转场长得一样 -> 只在"最近 AD_BLACK_GRACE 秒内
+        #     确实见过黑屏"时豁免; 画面一旦回到正常游戏页且顶栏还是认不出, 2b 照常撒手。
+        if not self._ad_seen:
+            frac = ad_black_frac(img)
+            if frac < AD_BLACK_MAX_FRAC:
+                if not self._ad_black_t:
+                    logging.info(f'[广告] 看了 {waited:.0f}s: 黑屏帧(非黑像素仅 {frac * 100:.1f}%) '
+                                 f'= 正在放广告, 顶栏没认出来也继续等')
+                self._ad_black_t = now
         if (not self._ad_seen and waited >= self.AD_NOT_AD_AT
-                and self._ad_page_hard(img)):
-            logging.warning(f'[广告] 等了 {waited:.0f}s 认出的是游戏自己的页且始终没有广告顶栏 '
-                            f'-> 判定没在看广告, 交回正常路由')
-            self._end_ad_watch()
-            return 'giveup'
+                and now - self._ad_black_t >= self.AD_BLACK_GRACE):
+            hard = self._ad_page_hard(img)
+            same = hard is not None and hard == self._ad_from
+            # 2b-① 动手前先问一次屏幕通道: 分歧度大 = 屏幕上确实盖着一层 PrintWindow 拍不到的
+            #     东西 = 广告正在放。这时候无论是撒手还是"免费再点一次[领取]",都等于自己把广告打断
+            #     -> 继续等(借用 _ad_black_t 这个"最近确实在放广告"的免死钻, 同 2a)。
+            div = None
+            if hard is not None and (not same or waited >= self.AD_NOT_AD_SAME_AT):
+                div = self._ad_overlay_frac(img)
+                if div is not None:
+                    logging.info(f'[广告] 通道分歧度 {div * 100:.1f}%(阈值 {self.AD_DIVERGE_FRAC * 100:.0f}%) '
+                                 f'-> ' + ('屏幕上有 PrintWindow 看不见的层 = 广告正在放, 继续等'
+                                          if div >= self.AD_DIVERGE_FRAC else '两条通道一致 = 确实没广告'))
+            if div is not None and div >= self.AD_DIVERGE_FRAC:
+                self._ad_black_t = now
+                return 'wait'
+            # 2b-② 还站在点[领取]那一页、且黄色[领取]还在 -> 先免费再点一次, 别急着撒手
+            if (same and waited >= self.AD_NOT_AD_SAME_AT
+                    and self._ad_claim_retry < self.AD_CLAIM_RETRY):
+                cp = ad_claim_pos(img)
+                if cp is not None:
+                    self._ad_claim_retry += 1
+                    self._ad_t0, self._ad_until = now, now + self.AD_WATCH_TOTAL
+                    logging.info(f'[广告] 等了 {waited:.0f}s 还停在 {self._ad_from} 且没有广告顶栏 '
+                                 f'-> 免费再点一次[领取] {cp} (第 {self._ad_claim_retry} 次, 重新计时)')
+                    self.click(*cp)
+                    return 'acted'
+            if hard is not None and (not same or waited >= self.AD_NOT_AD_SAME_AT):
+                logging.warning(f'[广告] 等了 {waited:.0f}s 硬命中游戏页 {hard} '
+                                f'(点[领取]时在 {self._ad_from}) 且始终没有广告顶栏 '
+                                f'-> 判定没在看广告, 交回正常路由')
+                self._end_ad_watch()
+                return 'giveup'
         # 3) 正在放: 一帧都不点, 只盯状态药丸有没有变短(= 文案换成"已获得奖励")。
         #    两把尺子任一命中即算放完: ①右边界相对本场最宽缩掉 >=AD_PILL_SHRINK px
         #                  ②带内白像素相对本场峰值少 >=AD_PILL_SHRINK_PCT 且持续 AD_PILL_LOW_HOLD 秒
@@ -285,10 +411,49 @@ class App:
                          f'左={self._ad_pill[2] if self._ad_pill else "-"})')
         return 'wait'
 
+    def _ad_sample(self, img, pos, now):
+        """广告窗口存证: 把这一帧写到 shots_live/ad_*.png
+
+        为什么非做不可: 广告创意每帧都变(点色定不了页), 但顶栏那颗状态药丸和[关闭]叉
+        是广告 SDK 的固定件 —— 想零 OCR 认出【广告放完了】就必须拿真广告帧标定它们。
+        真机 R31(2026-09-04 02:39~02:41)整段 100s 里 ad_close_pos 一次都没命中,
+        日志只有 药丸 右=- 白=-/峰 0 左=-, 而窗口期间**一帧都不落盘** => 下一轮还是没得标,
+        死等 bug 永远修不掉。arm 后 1s 存第一帧, 之后每 20s 一帧; 文件名带 p/n 表示
+        这一帧有没有认出广告顶栏, 标定和分组都靠它。
+        """
+        if now < self._ad_shot_next or self._ad_shot_n >= self.AD_SHOT_MAX:
+            return
+        self._ad_shot_n += 1
+        self._ad_shot_next = now + (self.AD_SHOT_DENSE if self._ad_shot_n < self.AD_SHOT_DENSE_N
+                                    else self.AD_SHOT_EVERY)
+        # 目录口径抄 _flag_stuck: 离线回归每跑一次就丢几张假广告帧, 不能污染
+        # shots_live/ 这个真机取证目录(真机靠 ad_*_p/n 判"广告到底有没有起来")。
+        d = STUCK_DIR_OFFLINE if getattr(self, 'dry_run', True) else os.path.join(ROOT, 'shots_live')
+        fn = 'ad_%s_%s.png' % (time.strftime('%H%M%S'), 'p' if pos is not None else 'n')
+        try:
+            os.makedirs(d, exist_ok=True)
+            img.save(os.path.join(d, fn))
+            extra = ''
+            # 第二通道: 密拍阶段同一时刻再抓一张**屏幕像素**(见 game_utils.capture_screen)。
+            # 两条通道都是游戏页 => 广告确实没起来; 屏幕那张黑掉/变成广告 => 是 PrintWindow
+            # 抓不到视频层, 判据得改走屏幕通道。真机 R34(04:16)游戏窗口已在前台、Z 序第一、
+            # 点[领取]后 3s 窗口自绘仍是游戏页 -> 只有这条通道能分清 A/B 两种解释。
+            if self.ad_screen and not self.dry_run and self._ad_shot_n <= self.AD_SHOT_DENSE_N:
+                sfn = fn.replace('ad_', 'ads_')
+                g.capture_screen(self.hwnd).save(os.path.join(d, sfn))
+                extra = ' +屏幕帧 ' + sfn
+            logging.info('[广告取证] 存帧 %s (关闭位=%s 药丸=%s)%s', fn, pos,
+                         self._ad_pill or '-', extra)
+        except Exception as ex:
+            logging.warning('[广告取证] 存帧失败: %s', ex)
+
     def _ad_page_hard(self, img):
-        """广告窗口里的"根本没在看广告"探针: 点色能**硬命中**某个已知页(2ms, 零 OCR) => 还留在游戏里"""
+        """广告窗口里的"根本没在看广告"探针: 点色能**硬命中**某个已知页(2ms, 零 OCR) => 还留在游戏里
+
+        返回命中的页名(没命中 -> None)。调用方还要看它是不是点[领取]时那一页, 所以不能只回 bool。
+        """
         page, _score, src = route_prints(self.pages, img, prefer=self.expected or ())
-        return page is not None and not is_soft(src)
+        return page.name if (page is not None and not is_soft(src)) else None
 
     def acted(self, key, gap=None):
         """动作冷却: True=还在冷却期(跳过); False=可以执行并刷新"""
@@ -316,6 +481,29 @@ class App:
                 raise RuntimeError('找不到游戏窗口, 请先打开 占城大师')
             self.vision = Vision(self.hwnd)   # 新引擎首轮必然 OCR, 不必再置标记
             self._win_warn = 0
+            self._screen_selftest()
+
+    def _screen_selftest(self):
+        """屏幕通道自检(capture_screen 和 PrintWindow 是两条独立的路, 一条废了另一条不一定废)
+
+        真机 R35 实证: enter_default_desktop 用低权限掩码切过桌面之后, 本线程的屏幕 DC 被废,
+        capture_screen 整帧纯黑, 而 PrintWindow 完全正常 —— 广告取证帧 ads_*.png 全黑就是这么
+        来的(独立进程抓同一块屏幕 mean≈146)。根因修好之后仍留这道自检: 以后换任何运行上下文,
+        日志第一句就说清屏幕通道能不能用, 不用对着全黑帧猜。
+        """
+        try:
+            lr, tt, rr, bb = g.get_rect(self.hwnd)
+            best = 0.0
+            for fx, fy in ((0.5, 0.5), (0.25, 0.25), (0.75, 0.75)):
+                x, y = int(lr + (rr - lr) * fx), int(tt + (bb - tt) * fy)
+                im = g.capture_screen_rect(x - 40, y - 40, 80, 80)
+                best = max(best, float(im.convert('L').resize((1, 1)).getpixel((0, 0))))
+        except Exception as ex:
+            logging.warning('[自检] 屏幕通道异常: %s', ex)
+            best = -1.0
+        self.ad_screen = best > 0.0
+        logging.info('[自检] 屏幕通道 %s (窗口内 3 点 80x80 最大灰度均值=%.1f)',
+                     '可用' if best > 0 else '全黑 -> 关闭广告密拍的屏幕帧', best)
 
     def ensure_window_size(self):
         """把窗口钉回指纹标定的基准尺寸 REF_SIZE(点色色块对尺寸极敏感)"""
@@ -494,6 +682,61 @@ class App:
                             name, why, os.path.relpath(os.path.join(d, fn), ROOT))
         except Exception as e:
             logging.warning('[卡页] 存帧失败: %s', e)
+
+    def _flag_flip(self, page, acted):
+        """C 路活锁检测: 两个页来回翻 + 同一落点反复点 = 点了没进展.
+
+        坑(真机 2026-09-04 第 29 轮, 连转 40 分钟一格箱都没开成): chest_info(开箱面板)的旧指纹
+        15 个点里有一串标在[标题行/卡名行]的**文字像素**上; 游戏当天那一格是[青铜宝箱]
+        (语料里只有木箱/铁箱) -> 字形位置变了 -> 13/15 = 0.8667 掉出软命中门槛
+        -> 面板认不出 -> 出口链 find_close_badge 认出面板真 X (468,165)
+        -> **机器人自己把面板关掉** -> 回大厅再点同一行 -> 16s 一圈, 永远进不了战斗。
+        A 路(_flag_stuck 静态签名)数不到它: 每轮 acted=True, 而且画面一直在变;
+        B 路(点色连续零命中)也数不到它: 大厅帧点色全中, _zerohit_run 每一圈都被清零。
+        => 三条判据里只有[同一坐标在短时间内被反复点]看得见这件事。
+
+        判据(常量见文件头 FLIP_*): 最近 FLIP_WINDOW 次点击里同一个坐标出现 >= FLIP_REPEAT 次,
+        且这些点击横跨 >= FLIP_PAGE_MIN 个页名(= 两页来回翻, 不是单页原地重试)。
+        动作: 只报警 + 存帧取证; 唯一允许的补救是这串点击里出现过大厅宝箱格时把整行拉黑
+        FLIP_BLOCK 秒 —— 那是活锁的燃料, 断掉它机器人自然会去开战斗, 比继续空转强。
+        (同日已把 chest_info 指纹整条重标到面板固定件上, 这条只是防同类腐烂再犯。)
+        """
+        if not acted or len(self._clicks) < FLIP_REPEAT:
+            return
+        win = list(self._clicks)
+        names = {n for n, _pt in win}
+        if len(names) < FLIP_PAGE_MIN:
+            return
+        (px, py), times = Counter(_pt for _n, _pt in win).most_common(1)[0]
+        if times < FLIP_REPEAT:
+            return
+        pair = '<->'.join(sorted(names))
+        key = '%s@%d,%d' % (pair, px, py)
+        if key != self._flip_key:
+            self._flip_key, self._flip_hits = key, 0
+        self._flip_hits += 1
+        if self._flip_hits > 1 and self._flip_hits % FLIP_ALARM_EVERY:
+            return                 # 同一个活锁别每轮刷屏: 只在第 1 / 6 / 12 ... 次报
+        name = page.name if page is not None else self.cur_page
+        img = getattr(self.f, 'img', None)
+        # 取证帧目录口径抄 _flag_stuck: 离线回归每跑一次就丢几张帧, 不能污染 shots_live/
+        d = STUCK_DIR_OFFLINE if getattr(self, 'dry_run', True) else os.path.join(ROOT, 'shots_live')
+        fp = '-'
+        if img is not None:
+            try:
+                os.makedirs(d, exist_ok=True)
+                fp = os.path.join(d, 'flip_%s_%s.png' % (name, time.strftime('%H%M%S')))
+                img.save(fp)
+                fp = os.path.relpath(fp, ROOT)
+            except Exception as e:
+                logging.warning('[活锁] 存帧失败: %s', e)
+        logging.warning('[活锁] %s 最近 %d 次点击里 (%d,%d) 重复 %d 次, 页名 %s '
+                        '(第 %d 次判定) -> 点了没进展, 存帧 %s',
+                        name, FLIP_WINDOW, px, py, times, pair, self._flip_hits, fp)
+        slots = {(int(x), int(y)) for x, y in CHEST_SLOTS}
+        if any(pt in slots for _n, pt in win) and not self.is_blocked(CHEST_BLOCK_ALL):
+            self.chest_target = None
+            self.block(CHEST_BLOCK_ALL, FLIP_BLOCK, '活锁: 宝箱格点了没进展')
 
     def step(self):
         """跑一轮: 点色定页(零 OCR) -> 只有声明要读字的页才 OCR 本页 ROI -> 动作.
@@ -699,6 +942,7 @@ class App:
                 page, acted, _ = self.step()
                 self.steps += 1
                 self._flag_stuck(page, acted)
+                self._flag_flip(page, acted)
                 if self.max_steps and self.steps >= self.max_steps:
                     logging.info(f'达到目标轮数 {self.max_steps}, 结束')
                     break
@@ -706,7 +950,7 @@ class App:
                     logging.info(f'达到目标场次 {self.max_battles}, 结束')
                     break
                 fg = PAGE_CFG.get(self.cur_page, PAGE_CFG['unknown'])
-                time.sleep(fg['poll'])
+                time.sleep(self.AD_TICK_POLL if self._ad_until else fg['poll'])
             except KeyboardInterrupt:
                 logging.info('手动中断')
                 break
@@ -714,6 +958,29 @@ class App:
                 logging.exception('循环异常: %s', e)
                 time.sleep(8)
         logging.info('挂机结束')
+
+
+_MUTEX = [None]        # 句柄必须活到进程结束, 否则互斥量会被回收
+
+def acquire_single_instance(name='Local\\ZCDS_AutoBot'):
+    """同一机器只允许一个 bot 在跑。
+
+    不是怕占 CPU，是怕污染取证语料: 两个进程各自点各的格子，同一秒往
+    shots_live/ 写两张状态码不同的大厅帧(实测 074833), 面板帧就再也归不清是谁点的。
+    拿不到互斥量的场景(非 Windows / 权限受限)一律放行, 不把正常启动拦死。
+    """
+    try:
+        import ctypes
+        # use_last_error=True: windll.kernel32.GetLastError() 会被 ctypes 自己的调用抢掉
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        h = k.CreateMutexW(None, False, name)
+        err = ctypes.get_last_error()
+        if not h:
+            return True
+        _MUTEX[0] = h
+        return err != 183        # ERROR_ALREADY_EXISTS(实测 GetLastError=183)
+    except Exception:
+        return True
 
 
 def main():
@@ -724,18 +991,27 @@ def main():
     ap.add_argument('--shots', type=int, default=0, help='每轮存帧到 shots_live/dbg_*.png, 存 N 帧(取证用)')
     ap.add_argument('--ad-probe', type=int, default=0,
                     help='结算页没认到黄色[领取]时存帧到 scratch/adprobe/, 存 N 帧(0=关)')
+    ap.add_argument('--no-ad-focus', action='store_true',
+                    help='点[领取]前不把游戏窗口带到前台(默认会带: 后台可能被判定不可见而不出广告)')
     ap.add_argument('--no-low-cpu', action='store_true', help='不降低微信进程优先级')
     ap.add_argument('--affinity', type=int, default=0, help='微信进程限 N 个CPU核(0=不限)')
     ap.add_argument('--no-resize', action='store_true',
                     help=f'不自动把窗口调成指纹基准尺寸 {REF_SIZE[0]}x{REF_SIZE[1]}')
+    ap.add_argument('--allow-multi', action='store_true',
+                    help='允许和另一个 bot 并发(会把 shots_live/ 取证语料写乱, 只测试用)')
     a = ap.parse_args()
+    if not (a.dry_run or a.allow_multi) and not acquire_single_instance():
+        sys.stderr.write('已有另一个 auto_bot 在跑(互斥量 Local\\ZCDS_AutoBot), 本次不启动'
+                       ' -- 并发会把取证帧写乱; 确要并发加 --allow-multi\n')
+        return
     setup_logging()
-    g.enter_default_desktop()
+    switched, note = g.enter_default_desktop()
+    logging.info('[启动] 桌面上下文: %s', note)
     try:
         App(a.max_battles, a.dry_run, low_cpu=not a.no_low_cpu,
             affinity_cores=a.affinity, resize=not a.no_resize,
             max_steps=a.max_steps, shots=a.shots,
-            ad_probe=a.ad_probe).run()
+            ad_probe=a.ad_probe, ad_focus=not a.no_ad_focus).run()
     except Exception as e:
         logging.exception('启动失败: %s', e)
     # 双击 exe/pyw 运行时要停住让人看日志; 但管道/自动化下 stdin 可能仍是控制台,

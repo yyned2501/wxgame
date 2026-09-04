@@ -128,7 +128,16 @@ def main():
     print('')
     print('[3] 面板配对复核: 免费面板<->有免费格, 付费面板<->有 p 格')
     lobby.sort()
+    # 同一秒出现多张大厅帧且状态码不同 = 把面板帧挂到哪一张都无法归因
+    # (实测来源: 两个 bot 并发往 shots_live/ 写帧)，这样的秒不参与配对
+    _codes = {}
+    for _lt, _lstem, _lst, _lbd in lobby:
+        _codes.setdefault(_lt, set()).add(_lst)
+    ambig = {k for k, v in _codes.items() if len(v) > 1}
+    print('     同秒歧义大厅秒(状态码冲突, 不可归因) n_amb=%d %s'
+           % (len(ambig), sorted(ambig)))
     pairs = set()
+    n_amb_skip = 0
     for p in paths:
         stem = os.path.basename(p).rsplit('.', 1)[0]
         if 'chest_info' not in stem:
@@ -147,8 +156,11 @@ def main():
         for lt, lstem, lst, lbd in lobby:
             d = secs(t) - secs(lt)
             if 0 <= d <= PAIR_WINDOW and (near is None or d < near[0]):
-                near = (d, lstem, lst)
+                near = (d, lstem, lst, lt)
         if near is None:
+            continue
+        if near[3] in ambig:
+            n_amb_skip += 1
             continue
         pairs.add((t, gem_cost_pixels(img, btn[0], btn[1]) >= GEM_MIN, near[2], near[1]))
     n_free = n_paid = v_free = v_paid = 0
@@ -163,6 +175,7 @@ def main():
             if not any(c in 'oU' for c in st):
                 v_free += 1
                 print('     !! %s 免费面板, 但大厅帧 %s 一格免费的都没有: %s' % (t, lstem, st))
+    print('     因歧义跳过的面板帧 n_amb_skip=%d' % n_amb_skip)
     check(n_free >= 8, '免费面板配对数', 'n_free=%d' % n_free)
     check(n_paid >= 25, '付费面板配对数', 'n_paid=%d' % n_paid)
     check(v_free == 0 and v_paid == 0, '配对零反例(角标判据 == 面板真值)',

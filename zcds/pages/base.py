@@ -266,12 +266,35 @@ def is_countdown(text):
 #   n 上限同时抬到 1010 收下这张真 X(973), battle 那几坨仍被两道闸各自挡住。
 CLOSE_RED_MIN_PX = 550      # 红底像素数(实测真 X: 697~973)
 CLOSE_RED_MAX_PX = 1010
-CLOSE_BOX_MIN = 30          # 外接框边长(12 的倍数; 真 X 全是 36~48, >=60 的都是页面装饰)
+CLOSE_BOX_MIN = 30          # 外接框边长(cell 的倍数; 真 X 在 cell=8 下恒为 32~48)
 CLOSE_BOX_MAX = 54
 CLOSE_WHITE_MIN = 60        # 框内白像素=那个叉(实测 142~193)
+# 2026-09-04 第 30 轮加第三道闸 = **位置先验**: 关闭键永远在弹窗右上角。
+#   全语料 882 帧重扫(scratch/scripts/badge_scan_all.py): find_close_badge 命中 123 帧,
+#   其中 122 帧 cx >= 432(= 宽 552 - 120), 全是人眼核对过的真 X(chest_info 22 / vip 10 /
+#   hero_level 5 / other 6 / 未标注真机帧 79); 唯一 cx < 432 的是 battle 页左上那坨红装饰
+#   (shots_live/dbg_009_battle_035400 -> (156,347))。同日真机又新增一坨: 战斗中反复弹到
+#   (31,459)/(32,460), 每场战斗白烧 2 轮(点色零命中 -> 出口链认出"徽章" -> 点空气 -> 回战斗)。
+#   尺寸/像素数两道闸都拦不住它(n/框/白全在真 X 带内), 只有 x 坐标能分清 => 直接拒右半边之外的一切候选。
+CLOSE_RIGHT_MARGIN = 120      # 真徽章 cx 实测 452~477, 留 20px 余量 -> 只接受 cx >= 宽-120
+# 2026-09-04 第 31 轮: cell 12 -> 8 + 第四道闸"中心必是白叉"。
+#   血案: 竞技场4礼包弹窗的真 X 在 (453,369), n=738/白=147/cx=453 全过,
+#   但它和右边那一列红图标(新手礼包/基金/月卡)在 cell=12 的粗格网下**共边连通**,
+#   合并成一坨 48x60 -> 被 CLOSE_BOX_MAX=54 拒掉 -> 出口链徽章找不到 -> 掉全图 OCR
+#   -> unknown 0.00 -> 最后靠 [未知] 试探遮罩瞎点才脱身, 白烧 2 分钟。
+#   4 邻域改造救不了(全语料 884 帧 8conn/4conn 命中数完全相同 122, changed 0),
+#   因为那一列红图标本来就上下相挨, 不是斜角粘连 [scratch/tmp/nbr.py]。
+#   真修法 = 把格子做细: cell=8 下 X 与右列图标断开, 实测 40x48(n=738/白=147) -> 过关。
+#   但格子变细会把以前"被合并成超大框而误拒"的东西放进候选池, 所以需要一条**语义闸**:
+#   关闭徽章是红底 + 居中的白叉, 叉的两笔在正中心交叉 => 中心 7x7 必是白。
+#   全语料 cell=8 下过 n/框/位置 三道闸的候选共 127 个: 126 个是人眼核对过的真徽章
+#   (中心 7x7 白像素 40~49, 红 0), 唯一 cw=0/cr=49 的那个是 battle 页右下的生气表情气泡
+#   (469,258) —— 它在 cell=8 下变成 48x40, 前三道闸全拦不住, 只有中心白叉能分清。
+#   真徽章中心实测 42~49, 取 30 留足余量 [scratch/tmp/cellprobe.py, cwx.py]。
+CLOSE_CENTER_WHITE_MIN = 30   # 中心 7x7 白像素下限(真徽章 42~49; 表情气泡 0)
 
 
-def find_close_badge(img, cell=12):
+def find_close_badge(img, cell=8):
     """整帧找红底白叉关闭徽章 -> (x, y); 没有则 None. 多个候选取最靠右的(关闭键都在右上)"""
     import numpy as np
     a = to_arr(img).astype(np.int16)   # PIL 截图和语料 ndarray 都要能吃
@@ -312,8 +335,13 @@ def find_close_badge(img, cell=12):
             pts = np.argwhere(sub)
             cy = int(pts[:, 0].mean()) + y0
             cx = int(pts[:, 1].mean()) + x0
+            if cx < w - CLOSE_RIGHT_MARGIN:
+                continue        # 左半边/中间的红块 = 页面装饰, 不是关闭键
             hw, hh = (x1 - x0) // 2, (y1 - y0) // 2
             if int(white[cy - hh:cy + hh + 2, cx - hw:cx + hw + 2].sum()) < CLOSE_WHITE_MIN:
+                continue
+            # 第四道闸: 中心 7x7 必须是白叉交点(表情/装饰是红心, 见上面第 31 轮注释)
+            if int(white[cy - 3:cy + 4, cx - 3:cx + 4].sum()) < CLOSE_CENTER_WHITE_MIN:
                 continue
             cands.append((cx, cy))
     if not cands:
@@ -638,6 +666,52 @@ AD_PILL_LOW_HOLD = 4.0                  # 而且要连续这么多秒都少才�
 #   (test_ad_escape 第[4]段就是这么炸的); 真被盖住(watch_124707)是 32->222,
 #   差 190px -> 取 20: 7px 放过, 190px 拦住。
 AD_PILL_LEFT_TOL = 20
+
+# ---- 黑屏广告判据(2026-09-04 凌晨用真广告帧标定: shots/watch_124711/124723) ----------
+# PrintWindow 抓不到视频层, 所以"正在放广告"的帧长这样: 整屏纯黑, 只有顶部一条 chrome
+#   (左边状态药丸 + 右边[关闭]), 实测**非黑像素只有 5~6%**。
+# 为什么还要单独一条判据: 顶栏是各家广告 SDK 自己的 chrome, ad_close_pos 认不出来时
+#   状态机会把这种帧当成"根本没在看广告"撒手 -> 主循环立刻去点别的地方 = 自己把广告
+#   打断 = 奖励作废。黑屏本身就是"广告在放"的强证据, 不需要认字。
+# 阈值 25% 的来路: 游戏自己的页非黑像素 96%+(真机 ad_*_n.png), 结算页往广告过渡那一帧
+#   37.6%(watch_124707, 黑屏正在盖上), 真广告帧 5~6% -> 25% 落在两头的空档里。
+AD_BLACK_MAX_FRAC = 0.25
+
+
+def ad_black_frac(img):
+    """整帧非黑像素占比(0~1)。黑 = R/G/B 最大值 <= 24。"""
+    import numpy as np
+    a = to_arr(img)[:, :, :3]
+    return float((a.max(2) > 24).mean())
+
+
+def is_ad_black(img):
+    """这一帧是不是"黑屏广告"(纯黑画布 + 顶栏) -> 见 AD_BLACK_MAX_FRAC 的实测依据"""
+    return ad_black_frac(img) < AD_BLACK_MAX_FRAC
+
+
+# 两条通道分歧度阈值。实测来路(R36, 屏幕通道修好后的 10 对**同刻**帧):
+#   没有广告层时"最大通道差 > 40"的像素只有 **4.09~5.15%**(差的就是顶栏 chrome 和抗锯齿),
+#   而真广告帧 PrintWindow 那边是 95% 纯黑、屏幕那边却是视频 -> 分歧必然接近满屏。
+#   0.25 和 AD_BLACK_MAX_FRAC 同档, 落在两头的空档正中。
+AD_DIVERGE_FRAC = 0.25
+AD_DIVERGE_PIX = 40
+
+
+def screen_div_frac(pw_img, sc_img):
+    """屏幕像素 与 PrintWindow 像素 的分歧度 = 逐像素最大通道差 > AD_DIVERGE_PIX 的比例。
+
+    为什么需要它: 激励视频是 GPU 合成的独立层, PrintWindow 抓不到(见 COLORPRINT 30.2),
+    于是"窗口自绘里还是游戏页"有两种相反的解释: A 广告根本没起来 / B 广告正盖着只是看不见。
+    同一时刻再抓一张屏幕像素: 两条通道一致才敢判 A。(旧 bug: 窗口站点掩码给错会让屏幕通道
+    整帧全黑 -> 分歧度永远很大, 已在 game_utils.enter_default_desktop 修掉, 见 30.8。)
+    """
+    import numpy as np
+    if pw_img.size != sc_img.size:
+        sc_img = sc_img.resize(pw_img.size)
+    a = to_arr(pw_img)[:, :, :3].astype('int16')
+    b = to_arr(sc_img)[:, :, :3].astype('int16')
+    return float((np.abs(a - b).max(2) > AD_DIVERGE_PIX).mean())
 
 
 def ad_pill_state(img):

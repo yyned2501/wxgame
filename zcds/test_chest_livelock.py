@@ -9,6 +9,9 @@ r"""开箱死循环回归: 面板判出"要花钱"之后, 大厅必须改去点[
   面板判付费 -> 把**那一格**拉黑 CHEST_PAID_BLOCK 秒 -> 大厅过滤掉拉黑的格子 ->
   没格可点就正常走[玩家对战]; 到期后再探一次(宝箱会随时间转免费)。
 
+第 9/10 段(2026-09-04 R29 补)另钉住 C 路活锁检测 App._flag_flip:
+  最近 8 次点击里同一落点 >=4 次且横跨 >=2 个页名 = 两页来回翻点了没进展 -> 报警 +
+  如果那串点击里出现过大厅宝箱格就把整行拉黑(断燃料), 让机器人转去打对战。
 ctx 用的是**线上真的 App**(block/is_blocked/acted 全走实现, 不另写一套语义),
 dry_run=True 所以 click 只打日志不会真点窗口; 帧全部来自 shots/ 语料,
 免费/付费由文件名钉死(_paid_ = 要花钱, 4 张都人眼核对过)。
@@ -178,6 +181,54 @@ def main():
     nxt(c5, frame(FOUR_SLOTS))
     lp.act(c5)
     check(c5.clicks == [PVP], '四格全可点也先去打对战', str(c5.clicks))
+
+    print('[9] C 路活锁: 面板指纹腐烂时[大厅 <-> unknown 同一落点反复点]必须报警 + 断燃料')
+    # 复现真机 2026-09-04 R29 的形状: 大厅点一格宝箱 -> 开箱面板认不出(旧指纹 13/15=0.8667
+    # 掉出软命中门槛, 因为有点标在[青铜宝箱]那几个会变的字上) -> 出口链认出面板真 X (468,165)
+    # -> 机器人自己把面板关掉 -> 回大厅再点同一行 ... 16s 一圈, 40 分钟一格没开成。
+    # A 路(_flag_stuck 静态签名)数不到它: 每轮 acted=True 且画面一直在变;
+    # B 路(点色连续零命中)也数不到: 大厅帧点色全中, _zerohit_run 每一圈都被清零。
+    # 只有 C 路(App._flag_flip: 最近 8 次点击里同一落点 >=4 次 且 横跨 >=2 个页名)看得见。
+    import logging as _lg
+    msgs = []
+
+    class _H(_lg.Handler):
+        def emit(self, rec):
+            if rec.levelno >= _lg.WARNING:
+                msgs.append(rec.getMessage())
+
+    _h = _H()
+    _lg.getLogger().addHandler(_h)
+    try:
+        c6 = new_ctx()
+        for i in range(6):                            # 6 圈 = 12 次点击, 超过 FLIP_WINDOW=8
+            nxt(c6, frame(FOUR_SLOTS))
+            c6.cur_page = 'lobby'                     # 大厅按游标轮换点 4 格(真机就是这个顺序)
+            c6.click(*CHEST_SLOTS[i % len(CHEST_SLOTS)])
+            c6._flag_flip(lp, True)
+            nxt(c6, frame(PAID_PANEL))
+            c6.cur_page = 'unknown'                   # 面板认不出 -> 出口链点真 X 关掉它
+            c6.click(468, 165)
+            c6._flag_flip(None, True)
+        n_flip = sum(1 for m in msgs if '[活锁]' in m)
+        check(n_flip >= 1, '活锁报警发出来了', ' | '.join(m for m in msgs if '[活锁]' in m)[:110])
+        check(c6.is_blocked(CHEST_BLOCK_ALL), '整行宝箱拉黑 = 断掉活锁的燃料', str(sorted(c6.blocked)))
+        check(n_flip == 1, '同一个活锁 6 圈只报 1 次(FLIP_ALARM_EVERY 生效, 不刷屏)', str(n_flip))
+
+        print('')
+        print('[10] 反例: 单页原地重试(战斗页连点同一格)不许误报活锁, 也不许拉黑宝箱')
+        c7 = new_ctx()
+        n_before = sum(1 for m in msgs if '[活锁]' in m)
+        for i in range(10):
+            nxt(c7, frame(FOUR_SLOTS))
+            c7.cur_page = 'battle'
+            c7.click(300, 400)
+            c7._flag_flip(lp, True)
+        n_new = sum(1 for m in msgs if '[活锁]' in m) - n_before
+        check(n_new == 0, '页名集合只有 1 个 -> 不算两页来回翻', '新增报警 %d 条' % n_new)
+        check(not c7.is_blocked(CHEST_BLOCK_ALL), '没拉黑宝箱行', str(sorted(c7.blocked)))
+    finally:
+        _lg.getLogger().removeHandler(_h)
 
     print('')
     if FAILS:

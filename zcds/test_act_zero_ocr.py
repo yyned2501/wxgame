@@ -127,6 +127,21 @@ def blank(img, box):
     return im
 
 
+
+def near_any(got, wants, d=3):
+    """落点真值允许多档: wants 可以是单个 (x,y), 也可以是一组 (x,y) 中心
+
+    为什么不写死单点: 同一个按钮在不同版式里整块会平移(结算页礼包面板下移 40px),
+    而且外接框中心本身会随动画呼吸抖 1px(levelup 实测 776/777, chest_open 917/918)。
+    语义上要点的是那颗按钮, 不是某个像素 —— 差 1px 判失败只会逼人把真值表改宽。
+    """
+    if got is None or wants is None:
+        return False
+    if not isinstance(wants[0], tuple):
+        wants = (wants,)
+    return any(abs(got[0] - w[0]) <= d and abs(got[1] - w[1]) <= d for w in wants)
+
+
 def main():
     print('[1] 声明自检: 纯点色页必须声明 act_needs_ocr=False, 主循环才不会为它跑 OCR')
     for cls in (ResultPage, ChestOpenPage, LobbyPage, ChestInfoPage, LevelUpPage, HeroLevelPage):
@@ -159,6 +174,10 @@ def main():
         #   (红龙 + 闪光盖住), 已换到 (26,192) 纯背景 -> pages/result.py.
         #   动作层没问题: 这一帧**没有**礼包横幅, 所以亮紫[继续]在 829(= 无横幅版式的 830)。
         'result_live201449': (275, 829),
+        # 2026-09-04 真机第 29~31 轮 12 帧: 这一档版式里礼包面板整块下移约 40px,
+        # 亮紫[继续]中心从 910 变成 899(实测 color_button 恒定 275,899); 12 帧都带黄色
+        # [领取]横幅 -> 下面 CLAIMED 会把真值改写成看广告落点, 这个值只在 WATCH_ADS 关掉时生效。
+        'result_live014557': (275, 899), 'result_live014913': (275, 899), 'result_live022442': (275, 899), 'result_live022626': (275, 899), 'result_live023249': (275, 899), 'result_live023639': (275, 899), 'result_live023919': (275, 899), 'result_live024104': (275, 899), 'result_live024421': (275, 899), 'result_live024720': (275, 899), 'result_live024904': (275, 899), 'result_live025130': (275, 899),
     }
     # 带黄色[领取]药丸的帧(ad_claim_pos 实测命中, 明细 scratch/scripts/claim_frames_0903.py):
     # act() 必须先点 (412,782) 去看广告, 而且这一轮**不算一场**(battles 不动), 同时把
@@ -168,8 +187,11 @@ def main():
         'watch_124700', 'watch_124705', 'result_live005639', 'result_live010726',
         'result_live010729', 'result_live030901', 'result_live030920', 'result_live031108',
         'result_live031408', 'result_live035436', 'result_live040817',
+        'result_live014557', 'result_live014913', 'result_live022442', 'result_live022626', 'result_live023249', 'result_live023639', 'result_live023919', 'result_live024104', 'result_live024421', 'result_live024720', 'result_live024904', 'result_live025130',
     }
-    CLAIM = (412, 782)
+    # 黄色[领取]药丸中心有两档(礼包面板两档纵向版式, 整块下移约 40px): (412,782) / (434,823)
+    # 人眼核对 scratch/tmp/an/claim_cross.png —— 两档的落点都正正画在药丸上。
+    CLAIM_CENTERS = ((412, 782), (434, 823))
     rp = ResultPage()
     frames = label_frames('result')
     check(set(frames) == set(EXPECT),
@@ -179,13 +201,12 @@ def main():
         img = frames.get(nm)
         if img is None:
             continue
-        want = CLAIM if nm in CLAIMED else want
+        want = CLAIM_CENTERS if nm in CLAIMED else want
         ctx = Ctx(img)
         hit = run(rp, img, ctx)
         got = ctx.clicks[0] if len(ctx.clicks) == 1 else None
-        near = (want is not None and got is not None
-                and abs(got[0] - want[0]) <= 3 and abs(got[1] - want[1]) <= 3)
-        check(near if want else not ctx.clicks,
+        got_ok = near_any(got, want)
+        check(got_ok if want else not ctx.clicks,
               'result/%s 点击 %s != %s' % (nm, ctx.clicks, want))
         check(hit == (want is not None),
               'result/%s act 返回 %s 与是否点击不一致' % (nm, hit))
@@ -210,6 +231,10 @@ def main():
         'chest_open_live010803': ((275, 917), 'chest_open_close'),
         # 真机 03:51:01: 底部白字=点击关闭, bot=1394 skip=0(核对 scratch/chk_co_bot.png)
         'chest_open_live035101': ((275, 917), 'chest_open_close'),
+        # 2026-09-04 真机第 29/30/31 轮三帧: 人眼核对 scratch/tmp/an/co_new3_full.png
+        #   底部白字都是[点击领取奖励] + 左上[跳过]还在 -> claim;
+        #   底部白块中心 918(老帧 917) —— 外接框底边随宝箱光效抖 1px, 断言放宽到 ±3。
+        'chest_open_live011320': ((275, 918), 'chest_open_claim'), 'chest_open_live014932': ((275, 918), 'chest_open_claim'), 'chest_open_live022853': ((275, 918), 'chest_open_claim'),
     }
     co = ChestOpenPage()
     frames = label_frames('chest_open')
@@ -222,7 +247,8 @@ def main():
             continue
         ctx = Ctx(img)
         run(co, img, ctx)
-        check(ctx.clicks == [want], 'chest_open/%s 点击 %s != %s' % (nm, ctx.clicks, want))
+        check(len(ctx.clicks) == 1 and near_any(ctx.clicks[0], want),
+              'chest_open/%s 点击 %s != %s' % (nm, ctx.clicks, want))
         check(ctx.keys and ctx.keys[-1] == tag,
               'chest_open/%s 节流键 %s != %s(领取/关闭认反会漏领或提前关)' % (nm, ctx.keys, tag))
     # 语料 6 帧底部按钮都已出现, 走不到[跳过]分支 -> 抠掉底带造一帧"动画还在放"的假帧
@@ -351,8 +377,8 @@ def main():
     for nm, img in sorted(lu_frames.items()):
         ctx = Ctx(img)
         got = run(LevelUpPage(), img, ctx)
-        check(got and ctx.clicks == [(275, 776)],
-              u'levelup/%s 点击 %s != [(275, 776)]' % (nm, ctx.clicks))
+        check(got and near_any(ctx.clicks[0] if ctx.clicks else None, (275, 776)),
+              u'levelup/%s 点击 %s 不在 (275,776)±3' % (nm, ctx.clicks))
     # 反向互斥: 宝箱面板那块是**同一颜色**(#FDCA33)的黄按钮, 付费面板点一次就花 30 紫宝石,
     # 所以本页的动作层必须永远不在 chest_info 帧上出手(中心 y 带 + 像素数上限两条尺子)。
     ci_frames = label_frames('chest_info')
