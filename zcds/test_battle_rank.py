@@ -288,7 +288,7 @@ check(n_new >= n_old * 1.4, '抽样 %d 帧: 新判据 %d 个可点格子 vs 旧�
 check(e_new <= len(sub) * 0.25, '抽样里「一个可点格子都扫不到」的帧 %d/%d = %.1f%% (旧判据 %.1f%%)' % (
       e_new, len(sub), 100.0 * e_new / len(sub), 100.0 * e_old / len(sub)))
 
-print('\n[10] 「一格都点不了」要在日志里说清是买不起还是看不见 (2026-09-04 §34.7)')
+print('\n[10] 「一格都点不了」要说清是买不起还是看不见, 且发牌帧不许报警 (2026-09-04 §34.7)')
 _red_only = [dict(c) for c in red8]     # 红标签 white=False -> 可点集为空, 但看得见
 _nothing = []   # 连红标签都没扫到 = 判据瞎了的形状
 _seen = []
@@ -304,26 +304,36 @@ _saved10 = _lg.handlers[:]
 _lg.handlers = [_Cap10()]
 try:
     B._LAST_EMPTY_NOTE[0] = 0.0
+    B._BLIND_STREAK[0] = 0
     B.scan_battle_cells = lambda im, *a, **k: [dict(c) for c in _red_only]
-    acted10 = BattlePage().act(FakeCtx(img))
+    acted10 = BattlePage().act(FakeCtx(img))           # 1) 看得见, 只是买不起
     B.scan_battle_cells = lambda im, *a, **k: list(_nothing)
-    BattlePage().act(FakeCtx(img))                     # 节流窗口内: 不许刷屏
+    BattlePage().act(FakeCtx(img))                     # 2) 节流窗口内: 不许刷屏
+    B._LAST_EMPTY_NOTE[0] = B._BLIND_STREAK[0] = 0
+    BattlePage().act(FakeCtx(img))                     # 3) 整盘零价签的第 1 帧
     B._LAST_EMPTY_NOTE[0] = 0.0
-    BattlePage().act(FakeCtx(img))                     # 归零后: 瞎了的形状也要报
+    BattlePage().act(FakeCtx(img))                     # 4) 连续第 2 帧 -> 才许报警
+    BattlePage().act(FakeCtx(img))                     # 5) 又被节流吃掉
 finally:
+    streak10 = B._BLIND_STREAK[0]
     B.scan_battle_cells = orig_scan
     _lg.handlers = _saved10
     _lg.setLevel(_old_lvl)
-    B._LAST_EMPTY_NOTE[0] = 0.0
+    B._LAST_EMPTY_NOTE[0] = B._BLIND_STREAK[0] = 0
 _empty_lines = [r for r in _seen if '[战斗] 无可点' in r]
 check(acted10 is False, '无可点的帧不动手: acted=%s' % acted10)
-check(len(_empty_lines) == 2, '20s 内只记 1 条, 节流归零后第 2 条: %s' % _empty_lines)
-check(len(_empty_lines) > 1 and '在架0 可点0 红2' in _empty_lines[0],
+check(len(_empty_lines) == 3, '20s 节流: 5 帧只留 3 条 -> %s' % len(_empty_lines))
+check(len(_empty_lines) > 0 and '在架0 可点0 红2' in _empty_lines[0],
       '红标签数进 census: %s' % (_empty_lines[0] if _empty_lines else '<无>',))
-check(len(_empty_lines) > 1 and '钱不够' in _empty_lines[0],
+check(len(_empty_lines) > 0 and '钱不够' in _empty_lines[0],
       '「买不起」要说清: %s' % (_empty_lines[0] if _empty_lines else '<无>',))
-check(len(_empty_lines) > 1 and '红0' in _empty_lines[1] and 'white_mask' in _empty_lines[1],
-      '「看不见」也要说清: %s' % (_empty_lines[1] if len(_empty_lines) > 1 else '<无>',))
+check(len(_empty_lines) > 1 and '红0' in _empty_lines[1] and 'white_mask' not in _empty_lines[1],
+      '零价签第 1 帧不许报警(真机 R41 那 2 次都是刚进场的发牌帧): %s'
+      % (_empty_lines[1] if len(_empty_lines) > 1 else '<无>',))
+check(len(_empty_lines) > 2 and 'white_mask' in _empty_lines[2] and '连续2帧' in _empty_lines[2],
+      '连续 2 帧零价签才升级成报警: %s'
+      % (_empty_lines[2] if len(_empty_lines) > 2 else '<无>',))
+check(streak10 == 3, '被节流吃掉的帧也要记账: 第 4 帧报警时算到 2, 第 5 帧继续累加 -> streak=%s' % streak10)
 
 
 print('\nSUMMARY failures = %d  (耗时 %.1fs)' % (len(FAILS), time.time() - T0))

@@ -21,6 +21,11 @@ CELL_COOLDOWN = 2.5
 EMPTY_NOTE_EVERY = 20.0
 # 上一条「无可点」日志的时刻(模块级 = 页面实例怎么建都不影响节流)
 _LAST_EMPTY_NOTE = [0.0]
+# 连续「整帧一个价签都没扫到」(白=0 且红=0) 的帧数。真机 R41 实测这种形状两次都出现在
+# **刚进战斗场的第一帧**(14:21:25 / 14:29:13, 3s 后就扫到 4~5 个格子) = 棋盘还没翻开,
+# 不是判据瞎 => 报警要连续 >= BLIND_ALARM_AFTER 帧才许响, 别把发牌帧误报成 bug
+_BLIND_STREAK = [0]
+BLIND_ALARM_AFTER = 2
 # 点过的格子拉黑多久. 到期后允许回头再点(同一格升级/开新的);
 # 镜头平移后同一格会落在新坐标 -> 自然就是新 key, 不受旧条目影响
 CELL_RETRY = 25.0
@@ -121,21 +126,32 @@ class BattlePage(Page):
         return 0.0
 
     def _note_no_cell(self, ctx, cells, now):
-        """本帧一个可点格子都没有 -> 记进日志, 并说清是「买不起」还是「看不见」。
+        r"""本帧一个可点格子都没有 -> 记进日志, 并说清是「买不起」还是「看不见」。
 
         为什么非记不可: 这两种形状以前在日志里长得一模一样(什么都不留, 整局安静几十秒)。
         2026-09-04 为回答用户「战斗中都不会点格子了」到底是哪种, 只能把整轮 269 张 battle
         语料逐帧重扫(见 COLORPRINT.md §34.7)。红标签本来就扫得到, 顺手记下来即可。
         尾巴复用 tier_census 的格式(`在架0 可点0 红N`), 按 `在架(\d+)` 抓日志的工具不用改。
+
+        R41(1200 步 / 687 次点格子)实测这一条报了 60 次: 58 次「钱不够」+ 2 次整盘零价签,
+        而那 2 次都在刚进场的第一帧 => 零价签先按「棋盘还没翻开」提示, 连续 >=2 帧才升级成
+        「判据可能又瞎了」的报警。
         """
         red = sum(1 for c in cells if c['cls'] == 'red')
+        # 先记账再看节流: 被节流吃掉的那些帧同样证明"这一帧还是啥都没扫到"
+        _BLIND_STREAK[0] = 0 if red else _BLIND_STREAK[0] + 1
         if now - _LAST_EMPTY_NOTE[0] < EMPTY_NOTE_EVERY:
             return
         _LAST_EMPTY_NOTE[0] = now
+        if red:
+            tail = '钱不够, 正常(等金币攒出来)'
+        elif _BLIND_STREAK[0] >= BLIND_ALARM_AFTER:
+            tail = ('连红标签都没有(连续%d帧整盘零价签): 判据可能又瞎了, '
+                    '查 battle_scan.white_mask' % _BLIND_STREAK[0])
+        else:
+            tail = '整盘零价签(多半刚进场棋盘还没翻开, 连续%d帧, 下一帧再看)' % _BLIND_STREAK[0]
         logging.info('[战斗] 无可点 | %s -> %s',
-                     tier_census([], ctx.clicked_cells, red),
-                     '钱不够, 正常(等金币攒出来)' if red
-                     else '连红标签都没有: 判据可能又瞎了, 查 battle_scan.white_mask')
+                     tier_census([], ctx.clicked_cells, red), tail)
 
     def act(self, ctx):
         cells = scan_battle_cells(ctx.f.img)
@@ -150,6 +166,7 @@ class BattlePage(Page):
         if not clickable:
             self._note_no_cell(ctx, cells, now)
             return False
+        _BLIND_STREAK[0] = 0   # 这帧扫到了可点格子 = 眼睛没问题
         if now - ctx.last_cell < CELL_COOLDOWN:
             return False
         # clicked_cells 是 {格子key: 点击时刻}: 先清掉过期条目, 再按档位找能点的格子
