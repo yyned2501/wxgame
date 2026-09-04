@@ -205,5 +205,83 @@ line8 = [r for r in recs if '\u70b9\u683c\u5b50' in r]
 check(len(line8) == 1 and '| \u5728\u67b66 \u53ef\u70b96 50\u77ff:1' in line8[0],
       'act() 日志尾巴带盘点: %s' % (line8[0][-70:] if line8 else '<无>'))
 
+
+print('\n[9] 白标签判据不许随地图底色漂移 (真机 2026-09-04: 用户「战斗中都不会点格子了」)')
+# 根因: 旧掩膜是固定三通道 >205。浅色地图把棋盘底色从 ~200 抬到 215~235, 整块棋盘糊成
+# 一个超宽连通块 -> scan_words 要 2~3 个 20px 宽数字块, 巨块被丢弃 -> 全天 2349 帧战斗语料
+# 里 600 帧(25%)一个格子都扫不到; 真机日志「在架」从早 8 点前的 avg 4.4~7.2/max 23
+# 塌成 9 点后的 avg 1.0/max 1。修完(局部对比 + 亮盘兜底降门)真机 avg 回到 6.4~8.0/max 17。
+import numpy as np
+
+from battle_scan import WHITE_BASE, scan_words
+
+
+def _board(a):
+    h, w = a.shape[:2]
+    y0, y1 = int(0.46 * h), int(0.90 * h)
+    b = a[y0:y1]
+    nz = np.where(b.max(axis=2).max(axis=0) > 40)[0]
+    content = (int(nz[0]), int(nz[-1])) if nz.size else None
+    red = ((b[:, :, 0] > 170) & (b[:, :, 1] < 95) & (b[:, :, 2] < 95)).astype(np.uint8)
+    return y0, b, content, scan_words(red, y0, content)
+
+
+def _old_words(a):
+    """旧判据(固定 >205) + 完全相同的切词/去红逻辑 -> 用来证明新判据严格更好"""
+    y0, b, content, rwords = _board(a)
+    white = ((b > WHITE_BASE).all(axis=2)).astype(np.uint8)
+    return [t for t in scan_words(white, y0, content) if t['cls'] != 3
+            if not any(abs(c['x'] + c['w'] // 2 - (t['x'] + t['w'] // 2)) < 20
+                       and abs(c['y'] + c['h'] // 2 - (t['y'] + t['h'] // 2)) < 16 for c in rwords)]
+
+
+BRIGHT = os.path.join(D, 'shots_live', 'dbg_510_battle_102511.png')   # 浅色地图, 棋盘 p50=216
+DARK = os.path.join(D, 'shots_live', 'dbg_446_battle_082054.png')     # 深色地图, 棋盘 p50=199
+
+
+def _white(a):
+    return [c for c in scan_battle_cells(a) if c['white'] and c['cls'] != 3]
+
+
+def _shift(a, d):
+    return np.clip(a.astype(np.int16) + d, 0, 255).astype(np.uint8)
+
+
+for tag, p, level, lo in (('亮图', BRIGHT, 216, 3), ('暗图', DARK, 199, 4)):
+    if not os.path.exists(p):
+        check(False, '缺少语料 %s' % p)
+        continue
+    a = np.asarray(Image.open(p).convert('RGB'))
+    cs = _white(a)
+    mn50 = int(np.median(_board(a)[1].min(axis=2)))
+    check(abs(mn50 - level) <= 6, '%s 棋盘 min 通道中位数 %d (登记值 %d)' % (tag, mn50, level))
+    check(len(cs) >= lo + 1, '%s 现在能扫到 %d 个可点格子 %s' % (
+          tag, len(cs), [(c['x'], c['y'], c['cls'], c['icon']) for c in cs]))
+    if tag == '亮图':
+        # 暗图上旧判据碰巧还能用(差 1 个), 亮图上它一个标签都交不出来 —— 这就是现场事故
+        check(len(_old_words(a)) == 0,
+              '亮图 旧的固定 >%d 扫到 %d 个可点格子 -> 正是这个判据把格子全吃掉的'
+              % (WHITE_BASE, len(_old_words(a))))
+    # 整体再压亮 20(比全语料最亮的地图 p50=218 还亮) -> 必须还看得见格子
+    up = len(_white(_shift(a, 20)))
+    check(up >= lo, '%s 压亮 +20 (min 通道中位数 %d) 还剩 %d 个可点格子 (亮盘兜底降门生效)'
+          % (tag, int(np.median(_board(_shift(a, 20))[1].min(axis=2))), up))
+    # 压暗 30 也不能丢(夜战/弹窗压暗闸门之外的正常变化)
+    check(len(_white(_shift(a, -30))) >= lo, '%s 压暗 -30 还剩 %d 个' % (
+          tag, len(_white(_shift(a, -30)))))
+
+# 全语料等距抽样: 新判据必须严格优于旧的固定阈值, 且「看不见格子」的帧必须少于一半
+sub = paths[::13]
+n_new = n_old = e_new = e_old = 0
+for p in sub:
+    a = np.asarray(Image.open(p).convert('RGB'))
+    cw, co = _white(a), _old_words(a)
+    n_new += len(cw); n_old += len(co)
+    e_new += not cw; e_old += not co
+check(n_new >= n_old * 1.4, '抽样 %d 帧: 新判据 %d 个可点格子 vs 旧判据 %d 个 (%.2f 倍)' % (
+      len(sub), n_new, n_old, n_new / float(max(1, n_old))))
+check(e_new <= len(sub) * 0.25, '抽样里「一个可点格子都扫不到」的帧 %d/%d = %.1f%% (旧判据 %.1f%%)' % (
+      e_new, len(sub), 100.0 * e_new / len(sub), 100.0 * e_old / len(sub)))
+
 print('\nSUMMARY failures = %d  (耗时 %.1fs)' % (len(FAILS), time.time() - T0))
 sys.exit(1 if FAILS else 0)

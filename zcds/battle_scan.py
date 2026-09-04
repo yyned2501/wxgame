@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""战斗格子纯颜色扫描 (numpy/cv2, 无 OCR, 每次 ~10-20ms)
+"""战斗格子纯颜色扫描 (numpy/cv2, 无 OCR, 每次 ~40ms: 白标签判据要算 15x15 邻域中值)
 
 规则(用户确认):
   - 价格标签: 白色=钱够可点, 红色=钱不够不能点
   - 图标: 白色多面矿石(黑棱线切成几块) = 矿; 头盔 = 兵营; 钩+点 = 问号
+  - 白标签掩膜用**局部对比**(比 15x15 邻域中值亮 25), 不用绝对亮度: 六边形棋盘底色
+    会随地图漂(实测中位 199~218), 固定 `>205` 会把整块浅色棋盘吞进掩膜 -> 连通块超宽
+    -> 一个格子都扫不到(真机 2026-09-04 第 38 轮: 全语料 44.0% 战斗帧瞎掉), 见 white_mask()
 返回 [{x, y, w, h, white, mine, icon, clip, cls}]
   cls: 25 / 50 / 100 / 250 / 3(认不出的三位数) / 'red'(钱不够); 认不出是价格的块直接丢弃
   clip: True = 贴着渲染边界(截图右侧黑边), 末位被裁, 价签靠左边缘断档识别
@@ -185,6 +188,35 @@ def icon_kind(win):
     return 'unknown'
 
 
+
+# ---- 白标签掩膜: 局部对比, 不随地图底色漂移 (2026-09-04 真机教训, 见模块 docstring) ----
+WHITE_BASE = 205      # 本身要够亮(挡掉"比暗背景亮但不白"的彩色像素)
+WHITE_OFF = 25        # 比 15x15 邻域中值至少亮这么多才算"白字"
+WHITE_MED_K = 15      # 邻域中值窗口: 11 会把塔身/按钮当标签(高 13~15), 21 起就没差别了
+
+# 兜底门: 整块棋盘被同一方向压亮时(浅色地图底色实测 199~218, 白字顶到 255),
+# 可用的局部对比会被压缩到 25 以下 -> 25 的门会一把全削掉, 退化成"看不见格子"。
+# 只在**一个标签都没扫到**且**底色确实偏亮**时, 用更松的门重扫一次。
+# 全语料 2686 帧实测: 该条件只命中 5 帧、多找回 6 个标签(零假阳性);
+# 而把 dbg_510(底色 216 的亮图)人为再压亮 20 -> 门 25 全瞎, 兜底门找回 3 个真标签。
+WHITE_FB_OFF = 10     # 兜底门限
+WHITE_FB_LEVEL = 208  # 兜底只在"中位底色 >= 208"的亮棋盘上生效
+
+
+def white_mask(board, base=WHITE_BASE, off=WHITE_OFF, k=WHITE_MED_K):
+    """棋盘区域 RGB -> 白色价格标签/图标的二值掩膜(uint8 0/1)
+
+    判据是**局部对比**而不是绝对亮度: 价格标签是纯白字 + 黑描边, 所以"自己比自己周围亮"
+    永远成立; 而棋盘底色(六边形灰面, 实测 199~235 随地图变)是大片均匀区, 减掉邻域中值
+    后恒等于 0 —— 这正是固定阈值做不到的: 阈值定 205 则浅色地图整块棋盘进掩膜(连通块
+    超宽 -> 一个格子都扫不到), 阈值提到 248 则暗地图上的标签被一起削掉。
+    """
+    import cv2
+    mn = board.min(axis=2)                      # min 通道 = "够不够白"(彩色在这里被否掉)
+    bg = cv2.medianBlur(mn, k)                  # 每个像素的 k x k 邻域中值 = 局部底色
+    return ((mn > base) & ((mn.astype(np.int16) - bg.astype(np.int16)) >= off)).astype(np.uint8)
+
+
 def scan_battle_cells(img, board_frac=(0.46, 0.90)):
     """扫描战斗棋盘. 返回 [{x,y,w,h,white,mine,icon,clip,cls}] 按 y,x 排序. 纯 numpy/cv2."""
     if isinstance(img, np.ndarray):
@@ -194,10 +226,11 @@ def scan_battle_cells(img, board_frac=(0.46, 0.90)):
     h, w = arr.shape[:2]
     y0, y1 = int(board_frac[0] * h), int(board_frac[1] * h)
     board = arr[y0:y1]
-    white = ((board[:, :, 0] > 205) & (board[:, :, 1] > 205) & (board[:, :, 2] > 205)).astype(np.uint8)
+    # 白标签掩膜: 见 white_mask() —— 不能用固定 >205, 浅色地图上会把整块棋盘吞进掩膜
+    white = white_mask(board)
     red = ((board[:, :, 0] > 170) & (board[:, :, 1] < 95) & (board[:, :, 2] < 95)).astype(np.uint8)
 
-    def icon_window(t):
+    def icon_window(wm, t):
         """标签正上方 32x24 窗口(按标签水平中心对齐), 返回 (白色掩膜, bbox) 或 None"""
         cx = t['x'] + t['w'] // 2
         wx0, wx1 = max(0, cx - 16), min(w, cx + 16)
@@ -205,7 +238,7 @@ def scan_battle_cells(img, board_frac=(0.46, 0.90)):
         wy0 = max(y0, wy1 - 24)
         if wy1 - wy0 < 16 or wx1 - wx0 < 16:
             return None
-        return white[wy0 - y0:wy1 - y0, wx0:wx1], (wx0, wy0, wx1, wy1)
+        return wm[wy0 - y0:wy1 - y0, wx0:wx1], (wx0, wy0, wx1, wy1)
 
     # 截图 552 宽, 但游戏内容只画到 ~543(右边一条黑边). 贴着内容边界的标签末位数字被裁掉:
     # "50" 的 0 断了闭合孔 -> 孔签名 (0,0) -> 误判成 25(真机右边缘一列 4 格实际 50/50/50/25,
@@ -213,22 +246,31 @@ def scan_battle_cells(img, board_frac=(0.46, 0.90)):
     bright = board.max(axis=2).max(axis=0)
     nz = np.where(bright > 40)[0]
     content = (int(nz[0]), int(nz[-1])) if nz.size else None
-    wwords = scan_words(white, y0, content)
     rwords = scan_words(red, y0, content)
 
-    out = []
-    for t in wwords:
-        # 同一格不会既白又红: 附近若有红标签, 这块白字是别的元素, 丢弃
-        if any(abs(c['x'] + c['w'] // 2 - (t['x'] + t['w'] // 2)) < 20
-               and abs(c['y'] + c['h'] // 2 - (t['y'] + t['h'] // 2)) < 16 for c in rwords):
-            continue
-        win = icon_window(t)
-        kind = icon_kind(win[0]) if win else None
-        out.append(dict(x=t['x'], y=t['y'], w=t['w'], h=t['h'], white=True,
-                        mine=(kind == 'ore'), icon=kind, clip=t['clip'],
-                        cls=t['cls']))
+    def white_cells(wm):
+        """按给定白掩膜出白色可点标签(同一格不会既白又红: 压着红标签的白字是别的元素)"""
+        res = []
+        for t in scan_words(wm, y0, content):
+            if any(abs(c['x'] + c['w'] // 2 - (t['x'] + t['w'] // 2)) < 20
+                   and abs(c['y'] + c['h'] // 2 - (t['y'] + t['h'] // 2)) < 16 for c in rwords):
+                continue
+            win = icon_window(wm, t)
+            kind = icon_kind(win[0]) if win else None
+            res.append(dict(x=t['x'], y=t['y'], w=t['w'], h=t['h'], white=True,
+                            mine=(kind == 'ore'), icon=kind, clip=t['clip'],
+                            cls=t['cls']))
+        return res
+
+    out = white_cells(white)
+    if not any(c['cls'] != 3 for c in out) \
+            and float(np.median(board.min(axis=2))) >= WHITE_FB_LEVEL:
+        # 整盘没有一个"能点的"白标签 + 底色偏亮 => 正是浅色地图吃掉局部对比的形状,
+        # 降门重扫一次(全语料只在 5/2686 帧触发且零假阳性, 见 WHITE_FB_* 注释)
+        out += white_cells(white_mask(board, off=WHITE_FB_OFF))
     for t in rwords:
-        win = icon_window(t)
+        # 红色 = 钱不够, 不能点, 但图标要参与"看到 >=2 个格子图标"的兜底定页守卫
+        win = icon_window(white, t)
         out.append(dict(x=t['x'], y=t['y'], w=t['w'], h=t['h'], white=False,
                         mine=False, icon=icon_kind(win[0]) if win else None,
                         clip=t['clip'], cls='red'))
