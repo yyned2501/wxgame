@@ -165,6 +165,7 @@ check(dp.act(bd_ctx) is True and len(CLICKS) == 1,
       '有徽章时仍然点徽章: %s' % (CLICKS,))
 
 print('[5] 全语料: 还要花 OCR 的帧只剩 3 张(上界锁死, 防新页面把 OCR 路由撑回去)')
+from known_blind import unclaimed_note
 import glob
 need = []
 n = 0
@@ -199,6 +200,10 @@ for p in sorted(glob.glob(os.path.join(D, 'shots', '**', '*.png'), recursive=Tru
     if nav_present(im) and nav_tab_cx(im) != NAV_LOBBY_TAB[0]:
         continue
     if back_arrow_pos(im):
+        continue
+    if unclaimed_note(p, _score, _src):
+        # §32 压暗盲区: 过场动画盖屏把整帧压暗 -> 点色全灭, 但真机同一次 step 的
+        # 全图 OCR 复核回了同一页(两张落盘逐字节相同)。代价 = 一次 OCR + 6~9s, 不会点错。
         continue
     need.append(os.path.relpath(p, D).replace(chr(92), '/'))
 check(n >= 820 and len(need) <= 3,

@@ -28,6 +28,7 @@ from PIL import Image
 import pick_print as pp
 from pages import ALL_PAGES
 from pages.base import route_prints
+from known_blind import unclaimed_note, blind_cap
 
 FP_PAGES = {p.name for p in ALL_PAGES if p.fingerprints()}
 
@@ -62,12 +63,12 @@ def frame_arr(path):
 
 
 def frames():
-    # 待测帧 -> (帧名, 数组, 页面身份, 语料/留出)
+    # 待测帧 -> (帧路径, 数组, 页面身份, 语料/留出)  (路径要给 known_blind 找同秒的配对证据帧)
     # 坑: pp.corpus() 的第三元素是 load() 出来的 ndarray, 不是文件路径。
     for lbl, name, arr in pp.corpus():
-        yield os.path.basename(name), arr, pp.group_of(lbl), '语料'
+        yield name, arr, pp.group_of(lbl), '语料'
     for path, lbl in holdout():
-        yield os.path.basename(path), frame_arr(path), lbl, '留出'
+        yield path, frame_arr(path), lbl, '留出'
 
 
 def main():
@@ -75,18 +76,28 @@ def main():
     ap.add_argument('-v', '--verbose', action='store_true', help='逐帧打印')
     a = ap.parse_args()
     fails, rows, missed = [], {}, 0
+    blind = []          # §32 设计内压暗盲区: 只是慢一次全图 OCR, 不判红, 但要记账
     frames_in = list(frames())
     n_hold = sum(1 for _f, _a, _l, k in frames_in if k == '留出')
     t0 = time.time()
-    for fname, arr, lbl, kind in frames_in:
+    for path, arr, lbl, kind in frames_in:
+        fname = os.path.basename(path)
         page, score, src = route_prints(ALL_PAGES, arr)
         got = page.name if page else None
         if lbl in FP_PAGES:
             ok = src is not None and got == lbl
             if not ok:
                 missed += 1
-                fails.append('%s %s 期望 %s, 实际 %s %s %.3f -> 主循环这一轮要白跑一次全图 OCR'
-                             % (kind, fname, lbl, got, src, score))
+                # 拆成两种失败: 认错页 = 会点错按钮, 零容忍; 谁都没认领 = 只是慢,
+                # 且必须拿得出"真机同一次 step 的全图 OCR 复核回同一页"这张凭证才放行(§32)
+                why = unclaimed_note(path, score, src) if got is None else None
+                if why:
+                    blind.append('%s %s: %s' % (kind, fname, why))
+                else:
+                    fails.append('%s %s 期望 %s, 实际 %s %s %.3f -> %s'
+                                 % (kind, fname, lbl, got, src, score,
+                                    '主循环这一轮要白跑一次全图 OCR' if got is None
+                                    else '点色把这一帧认成了另一页, 会点错按钮'))
         else:                              # 没指纹的帧: 认不出来是对的, 乱认才是事故
             ok = src is None
             if not ok:
@@ -107,6 +118,15 @@ def main():
               % ('OK' if tot == hit else 'BAD', lbl, hit, tot,
                  '' if lbl in FP_PAGES else '   <- 本页无指纹, 按设计交 OCR'))
     print('平均 %.1f ms/帧; 需要 OCR 兜底的指纹页帧: %d' % (dt * 1000.0 / max(n, 1), missed))
+    n_fp = sum(tot for lbl, (tot, _h) in rows.items() if lbl in FP_PAGES)
+    cap = blind_cap(n_fp)
+    print('其中 §32 设计内压暗盲区: %d 张(上界 %d, 占有指纹帧 %.3f%%)'
+          % (len(blind), cap, 100.0 * len(blind) / max(n_fp, 1)))
+    for b in blind:
+        print('   - ' + b)
+    if len(blind) > cap:
+        fails.append('压暗盲区涨到 %d 张 > 上界 %d -> 不再像"偶发全屏动画", 当真回归查'
+                     % (len(blind), cap))
     loaded = [m for m in sys.modules if 'rapidocr' in m or 'paddle' in m or m == 'vision']
     if loaded:
         fails.append('扫描过程竟然 import 了 OCR 相关模块: %s' % loaded)
@@ -116,7 +136,8 @@ def main():
         for m in fails:
             print('  - ' + m)
         return 1
-    print('全部通过: 有指纹的帧 100% 点色定页, 全程没碰 OCR')
+    print('全部通过: %d 张有指纹帧里没有一帧被认成别的页; %d 张"谁都没认领"且都交出了 §32 的 OCR 复核凭证'
+          ' (上界 %d); 扫描全程没碰 OCR' % (n_fp, len(blind), cap))
     return 0
 
 
