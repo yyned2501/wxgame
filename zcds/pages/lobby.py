@@ -2,6 +2,7 @@
 """主页(lobby): 自动开宝箱 -> 开始玩家对战"""
 import logging
 
+from config import WATCH_ADS
 from .base import (CHEST_BLOCK_ALL, Page, chest_slot_key, color_button,
                      color_pixels)
 
@@ -23,9 +24,11 @@ CHEST_BAND = (695, 790)
 # 阈值取法: 黄 >=500 才算有金按钮(实测 789 vs 0); 左半黄 >=250 判[开启](实测 380 vs 123);
 #   白 >=120 判[点击解锁](实测 143~176, 而[开启]/[[AD]]按钮自带的白描边只有 70~100, 120 留安全边际)。
 # 票券图标色 AAE4FF/6FC2F2/223F6B 与金色不搭, 所以只数金色就能把[开启]和[[AD]]分开。
-# 注意 [[AD]] 那一格点下去 = 看激励视频给这一格减 30 分钟冷却。config.WATCH_ADS 现在已是 True,
-# 但**这一格仍然刻意不点**: 点下去之后的面板从未采集过(19:11 那批黑帧只证明了"会进广告"),
-# 而广告额度一天只有 8 次 —— 接之前必须先单发探针取证(见 README 待办 2 末尾)。
+# 注意 [[AD]] 那一格点下去 = 看激励视频给这一格减 30 分钟冷却。
+#   旧版(≤2026-09-04)**刻意不点**: 点下去之后是什么面板从未采集过, 而广告额度一天只有 8 次。
+#   2026-09-05 用户定案「如果可以看广告得奖励, 优先看广告」-> a 格接入看广告窗口(见 act 第 0 步),
+#   无填充时广告窗口 4~6s 自己撒手, 面板/弹窗由既有出口处理; 节流 AD_ACCEL_GAP 防刷。
+AD_ACCEL_GAP = 120.0    # 秒; 两次点 a 格的最小间隔(与结算页 CLAIM_GAP 同口径: 连点必撞"稍后再试")
 CHEST_BTN_COLOR = 0xFDCA33
 CHEST_WHITE = 0xFFFFFF
 CHEST_BTN_BAND = (838, 882)     # 按钮行 y 范围(标题行在 y810..826, 不许混进来)
@@ -70,7 +73,8 @@ CHEST_BADGE_OFF = (34, 730, 58, 756)   # 相对槽中心 x 的取样框, 见上�
 #   而 chest_info.act() 必须[带内宝石像素 < GEM_MIN] 才肯点, 否则只点右上角 X 关闭并拉黑该格 300s。
 # 所以试探点 p 是零风险的: 免费 -> 真的白嫖一次解锁; 付费 -> 关面板走人, 一克拉宝石都不会花。
 #   它同时补齐目前缺的直接证据 —— 语料里从来没有一张从 p 格点进去的面板帧。
-# 边界: 只试探 p。a(=[[AD]加速], 点它=看激励视频, 下游从未采集) 和 .(空槽) 一律不点 —— 见 README 待办 14。
+# 边界: 只试探 p。.(空槽) 一律不点; a(=[[AD]加速]) 自 2026-09-05 用户定案后走**广告优先**分支
+#   (act 第 0 步, 见 AD_ACCEL_GAP), 不再属于试探路径 —— 试探分支永远碰不到 a。
 CHEST_PROBE_P = True
 CHEST_PROBE_GAP = 25.0   # 秒; 试探点击节流(万一 p 格点了根本不出面板, 也不会刷帧点它)
 # [玩家对战]按钮: 也是同一套金色。外接框中心 = 落点, 所以取样框必须**只罩住按钮本体**:
@@ -171,16 +175,34 @@ class LobbyPage(Page):
     # 轮换游标(真机教训: 旧版死点 ready[0], 那一格若点了没跳转就永远卡在同一坐标)
     _chest_i = 0
     _chest_p_i = 0        # 试探 p 格的轮换游标(同理, 别死点同一格)
+    _chest_ad_i = 0       # a 格(看广告加速)的轮换游标
 
     def act(self, ctx):
         img = ctx.f.img      # act_needs_ocr=False => ctx.f 只有图没有文字框, 别用 ctx.f.find()
+        st = self.chest_states(img)
+        # 0) 广告优先(用户 2026-09-05 定案「如果可以看广告得奖励, 优先看广告」):
+        #    有 [[AD]-30分钟加速] 格 -> 抢前台 -> 点它 -> start_ad_watch 接管(期间不定页/零 OCR/零点击)。
+        #    无填充时广告窗口自己撒手交回路由; 120s 节流; 该格判过付费拉黑期不碰。
+        if WATCH_ADS and not ctx.is_blocked(CHEST_BLOCK_ALL):
+            ad_slots = [s for s, code in zip(CHEST_SLOTS, st)
+                        if code == 'a' and not ctx.is_blocked(chest_slot_key(s))]
+            if ad_slots and not ctx.acted('chest_ad', gap=AD_ACCEL_GAP):
+                i = self._chest_ad_i % len(ad_slots)
+                sx, sy = ad_slots[i]
+                self._chest_ad_i = i + 1
+                logging.info(f'[主页] 宝箱状态 {st} 有[AD]加速格 -> 优先看广告, 点第 {i + 1} 格 ({sx},{sy})')
+                fg = getattr(ctx, 'ensure_foreground', None)
+                if fg:
+                    fg('大厅宝箱[AD]加速')
+                ctx.click(sx, sy)
+                ctx.start_ad_watch('大厅宝箱[AD]加速')
+                return True
         # 1) 开宝箱(纯点色五档码 o/U/p/a/. 见 chest_states):
         #    有免费格(o=[开启] / U=[点击解锁]且带红角标) -> 优先点它, 顺序不变
         #    一格免费都没有 -> 按用户口径**试探点 p 格**(白字[点击解锁]), 由 chest_info 面板的
         #      "按钮带内紫宝石像素"硬闸决定点还是关: 付费只关面板 + 拉黑该格 CHEST_PAID_BLOCK 秒,
-        #      全程不可能花宝石(见 CHEST_PROBE_P 上方证据)。a(看广告)/.(空槽) 仍然永不点。
+        #      全程不可能花宝石(见 CHEST_PROBE_P 上方证据)。a 格已由第 0 步广告优先分支接管。
         #    再叠一层拉黑: 那一格颜色不变 -> 大厅反复点 -> 反复关面板, 真机 03:54 6 秒一圈刷了 16 次
-        st = self.chest_states(img)
         ready = self._ready_chests(img, st)
         # CHEST_BLOCK_ALL = 面板判过付费但说不清是哪一格(用户手动开的面板) -> 整行先别碰
         openable = ([] if ctx.is_blocked(CHEST_BLOCK_ALL)

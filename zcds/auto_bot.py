@@ -954,6 +954,9 @@ class App:
             if page.name == 'battle':
                 self.clicked_cells.clear()
                 self.last_cell = 0
+                # 「连续零价签」报警的记账只许在同一场内累加(真机 R42 跨场累积误报, 见 battle.py)
+                from pages.battle import reset_blind_streak
+                reset_blind_streak()
         # 点色定完页、该读的字已经备好 -> 同一轮就能出手。
         # 旧版进页第一轮只补特征不动作(_skip_act), 每换一页白扔一轮, 已删除。
         acted = page.act(self)

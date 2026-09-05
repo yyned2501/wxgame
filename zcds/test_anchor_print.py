@@ -139,9 +139,12 @@ def main():
 
     # ---- 3) 异页 0 误中 ----
     print('[3] 全语料 + 真机帧: anchor 只许命中 vip_popup')
-    rows = list(corpus_rows())
+    # 流式两遍(2026-09-05 教训): list() 物化数千帧数组会在 6GB 机器上 MemoryError,
+    #   第二遍直接从文件重新过生成器, 单次驻留一帧。
     used, wrong = [], []
-    for grp, kind, name, arr in rows:
+    n_rows = 0
+    for grp, kind, name, arr in corpus_rows():
+        n_rows += 1
         page, score, src_ = route_prints(ALL_PAGES, arr)
         if src_ == 'anchor':
             used.append(name)
@@ -158,13 +161,13 @@ def main():
         '同为弹窗但左侧不是金币排的 ask_battle: 锚点组最高只中 %.2f' % anchor_best(ask))
     worst = 0.0
     wname = None
-    for grp, kind, name, arr in rows:
+    for grp, kind, name, arr in corpus_rows():
         if grp == 'vip_popup' or not VIP.anchor_fingerprints():
             continue
         s = anchor_best(arr)
         if s > worst:
             worst, wname = s, name
-    chk(worst < 1.0, '全部 %d 张异页帧锚点组最高只中 %.2f (%s)' % (len(rows), worst, wname))
+    chk(worst < 1.0, '全部 %d 张异页帧锚点组最高只中 %.2f (%s)' % (n_rows, worst, wname))
 
     # ---- 4) 差 1 点不许软命中 ----
     print('[4] 锚点组不参与软命中(点数 < SOFT_MIN_PTS=%d)' % SOFT_MIN_PTS)

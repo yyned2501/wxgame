@@ -262,25 +262,25 @@ def main():
         run(co, ctx.f.img, ctx)
         check(ctx.clicks == [], '两处白块都没有时必须不动作, 实际 %s' % (ctx.clicks,))
 
-    print('[4] 大厅: 免费宝箱优先, 无免费格则试探点 p 格, [AD]加速格一律不点, 实在没得点才打一局')
+    print('[4] 大厅: 有[AD]加速格优先看广告, 其次免费宝箱, 无免费格则试探点 p 格, 实在没得点才打一局')
     # 槽位状态码(o=[开启] U=[点击解锁]+红角标=免费 p=[点击解锁]无角标=要宝石 a=[AD]加速 .=空)
     # 的逐帧真值回归在 test_print_route.py [9]
     # 这里只钉 act 的落点: 冷却/空槽帧必须退到[玩家对战], 半程帧必须跳到可点那一格
+    # 2026-09-05 用户定案「如果可以看广告得奖励, 优先看广告」-> a 格排第 0 优先(点它必须 arm 看广告窗口)
     EXPECT = {
         'lobby_clean': CHEST_SLOTS[0],              # UUUU
         'guide_live2': CHEST_SLOTS[0],              # oUUU
-        # 2026-09-03 晚用户口径: 三格白字[点击解锁]全都没红角标 -> **试探点最左那格 p**,
-        #   免费/付费由 chest_info 面板的宝石像素硬闸判(付费只关面板+拉黑该格, 不会花宝石)
-        'live_lobby': CHEST_SLOTS[0],               # pppa  试探槽1(p); 槽4 是[AD], 更不许点
+        # 2026-09-03 晚用户口径: 三格白字[点击解锁]全都没红角标 -> 试探; 但 09-05 起槽4 的 [AD] 更优先
+        'live_lobby': CHEST_SLOTS[3],               # pppa  广告优先点槽4(a); p 试探退居其次
         'live_now2': CHEST_SLOTS[0],                # UUUo
         'lobby_live010733': CHEST_SLOTS[0],         # Uo..
         'flow4_s1_after_continue': CHEST_SLOTS[0],  # U...
         'live_20260902_a': CHEST_SLOTS[0],          # o...
         'lobby_chest_ready_2355': CHEST_SLOTS[0],   # o...
-        'lobby_mixed_0019': CHEST_SLOTS[1],         # ap..  槽1 冷却 -> 试探槽2 那格 p
+        'lobby_mixed_0019': CHEST_SLOTS[0],         # ap..  广告优先点槽1(a)
         'lobby_live004222': CHEST_SLOTS[1],         # .u..
-        'lobby_cooling_2335': PVP,                  # a...  唯一一格要点的是看广告(没 p 可试) -> 打一局
-        'lobby_live010807': PVP,                    # a...
+        'lobby_cooling_2335': CHEST_SLOTS[0],       # a...  唯一一格 a -> 优先看广告(旧版: 打一局)
+        'lobby_live010807': CHEST_SLOTS[0],         # a...  同上
         'lobby_live014209': PVP,                    # ....
         'step0_main': PVP,                          # ....
         'after_click': PVP,                         # ....
@@ -295,7 +295,8 @@ def main():
         ctx = Ctx(img)
         run(LobbyPage(), img, ctx)   # 逐帧判落点必须用新实例: 轮换游标是实例状态
         check(ctx.clicks == [want], 'lobby/%s 点击 %s != %s' % (nm, ctx.clicks, want))
-    # 全量兜底: 每帧必须只点一次, 落点只能在 4 个宝箱槽或玩家对战按钮上, 且绝不点[AD]格
+    # 全量兜底: 每帧必须只点一次, 落点只能在 4 个宝箱槽或玩家对战按钮上;
+    # 点[AD]格只许走广告入口 —— 必须同时 arm 看广告窗口, 否则就是"当成免费开箱点了"(旧 bug 形状)
     n = 0
     for nm, img in sorted(frames.items()):
         ctx = Ctx(img)
@@ -305,10 +306,10 @@ def main():
               'lobby/%s 落点异常 %s' % (nm, ctx.clicks))
         st = lp.chest_states(img)
         for i, ch in enumerate(st):
-            if ch == 'a':
-                check(ctx.clicks[0] != CHEST_SLOTS[i],
-                      'lobby/%s 把第 %d 格[AD]加速点成了免费开箱' % (nm, i + 1))
-    print('    %d 帧: 每帧恰好一次点击, 落点只在 4 槽 + 玩家对战, 从不点[AD]格' % n)
+            if ch == 'a' and ctx.clicks and ctx.clicks[0] == CHEST_SLOTS[i]:
+                check(bool(ctx.ad_watch),
+                      'lobby/%s 点了第 %d 格[AD]却没 arm 看广告窗口' % (nm, i + 1))
+    print('    %d 帧: 每帧恰好一次点击, 落点只在 4 槽 + 玩家对战, 点[AD]格必带看广告窗口' % n)
     # 轮换: 真机教训 —— 旧版死点 ready[0], 那一格若点了没跳转就永远卡在同一坐标
     img = frames.get('lobby_clean')
     if img is not None:

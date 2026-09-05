@@ -182,19 +182,16 @@ def main():
           '违反 free=%d paid=%d' % (v_free, v_paid))
 
     print('')
-    print('[4] 行为: 有免费格只点免费格 / 全无免费 -> 试探点 p 格 / p 也拉黑了才去打对战')
+    print('[4] 行为: [AD]格优先看广告 > 免费宝箱 > 试探 p 格 > 打对战 (2026-09-05 用户定案)')
     PVP = color_button(img_of(os.path.join(ROOT, 'shots', 'lobby_clean.png')),
                        PVP_BOX, PVP_COLOR, PVP_MIN_PX)
-    # 无免费格(全 p 或 .)的四帧: 2026-09-03 晚改口径 -> 不再"只打对战", 而是试探点**第一格 p**
-    PROBE = [('shots/live_lobby.png', 'pppa', CHEST_SLOTS[0]),        # 3 格白字无角标 + 1 格[AD]
-             ('shots/lobby_mixed_0019.png', 'ap..', CHEST_SLOTS[1]),      # 1 格[AD] + 1 格白字无角标 -> 点那格 p
-             ('shots_live/tap_hero.png', 'appp', CHEST_SLOTS[1]),     # 3 格 p -> 点最左那格 p
-             ('shots_live/dbg_002_lobby_081833.png', 'ppap', CHEST_SLOTS[0])]
-    DO_CHEST = [('shots/lobby_clean.png', 'UUUU'),          # 4 格全带角标
-                ('shots/lobby_live004222.png', '.U..'),
-                ('shots/live_20260902_a.png', 'o...'),
-                ('shots/live_now2.png', 'UUUo')]
-    for rel, want, expect in PROBE:
+    # 含 a 格的四帧: 旧版(2026-09-03 晚口径)先试探 p; 09-05 起 a 格排第 0 优先。
+    # probe_expect = "只把 a 格拉黑后"应回退到的 p 试探落点(= 旧版行为, 仍不许丢)
+    AD_FIRST = [('shots/live_lobby.png', 'pppa', CHEST_SLOTS[3], CHEST_SLOTS[0]),
+                ('shots/lobby_mixed_0019.png', 'ap..', CHEST_SLOTS[0], CHEST_SLOTS[1]),
+                ('shots_live/tap_hero.png', 'appp', CHEST_SLOTS[0], CHEST_SLOTS[1]),
+                ('shots_live/dbg_002_lobby_081833.png', 'ppap', CHEST_SLOTS[2], CHEST_SLOTS[0])]
+    for rel, want, expect, probe_expect in AD_FIRST:
         p = os.path.join(ROOT, rel)
         if not os.path.exists(p):
             print('     (跳过 %s)' % rel)
@@ -204,20 +201,38 @@ def main():
         check(st == want, '%-34s 状态码' % os.path.basename(rel), st)
         c = new_ctx(img)
         LobbyPage().act(c)
-        if expect is None:
-            check(c.clicks == [PVP], '%-34s 无免费格也没 p 格 -> 改打对战' % os.path.basename(rel), str(c.clicks))
-        else:
-            check(c.clicks == [expect], '%-34s 无免费格 -> 试探点 p 格' % os.path.basename(rel), str(c.clicks))
-            check(c.chest_target == chest_slot_key(expect),
-                  '%-34s 试探后回写 chest_target' % os.path.basename(rel), str(c.chest_target))
-            # 那一格被面板判付费拉黑后: 不许再点第二格以外的东西, 也不许点 a/. 格
-            c2 = new_ctx(img)
-            for slot, code in zip(CHEST_SLOTS, st):
-                if code == 'p':
-                    c2.block(chest_slot_key(slot), 300, '回归: 模拟面板判付费')
-            c2.last_action = {}
-            LobbyPage().act(c2)
-            check(c2.clicks == [PVP], '%-34s p 格全拉黑 -> 回到只打对战' % os.path.basename(rel), str(c2.clicks))
+        check(c.clicks == [expect], '%-34s 广告优先点 a 格' % os.path.basename(rel), str(c.clicks))
+        check(getattr(c, '_ad_until', 0) > 0,
+              '%-34s 点 a 格必须同时 arm 看广告窗口' % os.path.basename(rel), str(c._ad_until))
+        # p 格全拉黑(模拟面板判过付费): 广告优先不受影响, 仍点 a
+        c2 = new_ctx(img)
+        for slot, code in zip(CHEST_SLOTS, st):
+            if code == 'p':
+                c2.block(chest_slot_key(slot), 300, '回归: 模拟面板判付费')
+        c2.last_action = {}
+        LobbyPage().act(c2)
+        check(c2.clicks == [expect], '%-34s p 全拉黑 -> a 格仍广告优先' % os.path.basename(rel), str(c2.clicks))
+        # 只把 a 格拉黑: 回退到旧口径的 p 试探(免费/付费仍由面板宝石像素硬闸判)
+        c3 = new_ctx(img)
+        c3.block(chest_slot_key(expect), 300, '回归: 模拟 a 格广告入口失败')
+        c3.last_action = {}
+        LobbyPage().act(c3)
+        check(c3.clicks == [probe_expect], '%-34s 只拉黑 a -> 回退试探 p' % os.path.basename(rel), str(c3.clicks))
+        check(c3.chest_target == chest_slot_key(probe_expect),
+              '%-34s 试探后回写 chest_target' % os.path.basename(rel), str(c3.chest_target))
+        # a 和 p 都拉黑: 才轮到打对战
+        c4 = new_ctx(img)
+        for slot, code in zip(CHEST_SLOTS, st):
+            if code in 'pa':
+                c4.block(chest_slot_key(slot), 300, '回归: a/p 全拉黑')
+        c4.last_action = {}
+        LobbyPage().act(c4)
+        check(c4.clicks == [PVP], '%-34s a/p 都拉黑 -> 打对战' % os.path.basename(rel), str(c4.clicks))
+
+    DO_CHEST = [('shots/lobby_clean.png', 'UUUU'),          # 4 格全带角标
+                ('shots/lobby_live004222.png', '.U..'),
+                ('shots/live_20260902_a.png', 'o...'),
+                ('shots/live_now2.png', 'UUUo')]
 
     # 合成状态矩阵: 真语料里"一格免费都没有"的帧恰好都带 p, 所以剩下三种组合只能造
     #   (做法 = 拿一张真 lobby 帧, 只把状态码换掉, 落点仍走真坐标)
@@ -232,7 +247,7 @@ def main():
     for fake, why, want in [
             ('UpU.', '有免费格(U) -> 绝不点 p', [CHEST_SLOTS[0]]),
             ('op.o', '有[开启]格(o) -> 绝不点 p', [CHEST_SLOTS[0]]),
-            ('a...', '只有[AD]格 -> 没得试探, 打对战', [PVP]),
+            ('a...', '只有[AD]格 -> 广告优先点它(2026-09-05)', [CHEST_SLOTS[0]]),
             ('....', '全空槽 -> 打对战', [PVP]),
             ('pp.p', '有 p 格 -> 试探最左那格', [CHEST_SLOTS[0]]),
     ]:

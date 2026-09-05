@@ -335,6 +335,38 @@ check(len(_empty_lines) > 2 and 'white_mask' in _empty_lines[2] and '连续2帧'
       % (_empty_lines[2] if len(_empty_lines) > 2 else '<无>',))
 check(streak10 == 3, '被节流吃掉的帧也要记账: 第 4 帧报警时算到 2, 第 5 帧继续累加 -> streak=%s' % streak10)
 
+# [10b] 跨场不累积(真机 R42 误报): 上一局收场帧把 streak 顶到 2, 新一局进场清零后
+#       第一帧零价签必须还是"第 1 帧"提示 —— 不许借旧账升级成"判据又瞎了"报警
+print('\n[10b] 进场比赛 reset_blind_streak 后, 发牌帧不许借上一场的旧账报警 (R42)')
+_seen10b = []
+
+
+class _Cap10b(logging.Handler):
+    def emit(self, r):
+        _seen10b.append(r.getMessage())
+
+
+_lg.setLevel(logging.DEBUG)
+_saved10b = _lg.handlers[:]
+_lg.handlers = [_Cap10b()]
+try:
+    B._BLIND_STREAK[0] = 2                       # 模拟: 上一局收场动画已连 2 帧零价签
+    B.reset_blind_streak()
+    check(B._BLIND_STREAK[0] == 0, '进场必须清零: streak=%d' % B._BLIND_STREAK[0])
+    B._LAST_EMPTY_NOTE[0] = 0.0
+    B.scan_battle_cells = lambda im, *a, **k: []
+    BattlePage().act(FakeCtx(img))               # 新一局第 1 帧: 棋盘还没发牌
+finally:
+    streak10b = B._BLIND_STREAK[0]
+    B.scan_battle_cells = orig_scan
+    _lg.handlers = _saved10b
+    _lg.setLevel(_old_lvl)
+    B._LAST_EMPTY_NOTE[0] = B._BLIND_STREAK[0] = 0
+_l10b = [r for r in _seen10b if '[战斗] 无可点' in r]
+check(streak10b == 1, '进场后从 0 重新记账: streak=%d' % streak10b)
+check(len(_l10b) == 1 and '连续1帧' in _l10b[0] and 'white_mask' not in _l10b[0],
+      '新一局发牌帧只给提示、不报警: %s' % (_l10b[0] if _l10b else '<无>',))
+
 
 print('\nSUMMARY failures = %d  (耗时 %.1fs)' % (len(FAILS), time.time() - T0))
 sys.exit(1 if FAILS else 0)

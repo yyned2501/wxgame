@@ -77,10 +77,14 @@ def main():
     a = ap.parse_args()
     fails, rows, missed = [], {}, 0
     blind = []          # §32 设计内压暗盲区: 只是慢一次全图 OCR, 不判红, 但要记账
-    frames_in = list(frames())
-    n_hold = sum(1 for _f, _a, _l, k in frames_in if k == '留出')
+    # 流式逐帧(2026-09-05 教训): 语料涨到数千张后 list() 一次吃掉几 GB -> 6GB 机器 MemoryError。
+    # 总数 n 与留出数 n_hold 挪进主循环计数。
+    n = n_hold = 0
     t0 = time.time()
-    for path, arr, lbl, kind in frames_in:
+    for path, arr, lbl, kind in frames():
+        n += 1
+        if kind == '留出':
+            n_hold += 1
         fname = os.path.basename(path)
         page, score, src = route_prints(ALL_PAGES, arr)
         got = page.name if page else None
@@ -111,7 +115,6 @@ def main():
                   % ('ok' if ok else 'BAD', kind, lbl, got or '-', src or 'OCR兜底',
                      score, fname))
     dt = time.time() - t0
-    n = len(frames_in)
     print('定页面只用点色: %d 张(标定语料 %d / 真机留出 %d)' % (n, n - n_hold, n_hold))
     for lbl, (tot, hit) in sorted(rows.items()):
         print('  %-4s %-11s %3d/%3d 点色定页%s'
