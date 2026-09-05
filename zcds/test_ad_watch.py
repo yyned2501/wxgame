@@ -152,15 +152,17 @@ print('[2] ad_pill_right: 逐帧读数 + 放完判据用"本场相对缩窄"(绝
 for rel, want, note in PILL:
     got = ad_pill_right(load(rel))
     check(got == want, '%s 药丸右边界 %s != 实测 %s (%s)' % (rel, got, want, note))
-wide = ad_pill_right(load('shots/watch_124711.png'))
+start_width = ad_pill_right(load('shots/watch_124711.png'))  # 27s 倒计时的自然起点
+min_width = min(ad_pill_right(load(f)) for f in
+             ('shots/watch_124711.png', 'shots/watch_124723.png', 'shots/watch_124735.png', 'shots/watch_124746.png'))  # 211/211/204/164 -> 164
 jitter = ad_pill_right(load('shots/watch_124735.png'))
 done = ad_pill_right(load('shots/watch_124746.png'))
-check(wide - jitter < AD_PILL_SHRINK,
+check(start_width - jitter < AD_PILL_SHRINK,
       '倒计时抖动 %d->%d(缩 %d)被当成放完 -> 会提前关广告, 阈值 %d 太松'
-      % (wide, jitter, wide - jitter, AD_PILL_SHRINK))
-check(done is not None and wide - done >= AD_PILL_SHRINK,
-      '真放完 %d->%d(缩 %d)判不出 -> 永远等不到关闭' % (wide, done, wide - done))
-check(wide - ad_pill_right(load('shots/ad_popup_live122400.png')) < AD_PILL_SHRINK,
+      % (start_width, jitter, start_width - jitter, AD_PILL_SHRINK))
+check(done is not None and start_width - done >= AD_PILL_SHRINK,
+      '真放完 %d->%d(缩 %d)判不出 -> 永远等不到关闭' % (start_width, done, start_width - done))
+check(start_width - ad_pill_right(load('shots/ad_popup_live122400.png')) < AD_PILL_SHRINK,
       '换一路广告 SDK(药丸天然窄)时相对判据仍不误判放完')
 
 # ======================= [2b] 药丸第二把尺子: 带内白像素 =======================
@@ -244,7 +246,7 @@ try:
         check(r == want, '第%d轮(%s, t+=%.0f) -> %s, 应为 %s' % (i + 1, os.path.basename(rel), dt, r, want))
     check(app._ad_until == 0.0, 'done 之后窗口没关: _ad_until=%s' % app._ad_until)
     check(CLICKS == [CLOSE, CLOSE], '整个窗口只该点[关闭](放完 1 次 + 重补 1 次): %s' % (CLICKS,))
-    check(app._ad_pill_max == wide, '本场最宽药丸 %s != 实测 %s' % (app._ad_pill_max, wide))
+    check(app._ad_pill_min == min_width, '本场最窄药丸 %s != 实测 %s' % (app._ad_pill_min, min_width))
 
     # 🔴 2026-09-05 用户定案「广告得看满时间, 不能中途退出」: 旧锁"等满 40s 也当放完 -> 点[关闭]"
     #   翻转为 **时间不是放完的证据**: 没有药丸缩窄, 等过旧 40s 上限也只许继续等、一个键都不点,
@@ -282,9 +284,9 @@ try:
             FT.t += dt
             r = app._ad_tick(load('shots/watch_124711.png'))
             check(r == want, '尺子二 t+=%.0f -> %s, 应为 %s' % (dt, r, want))
-        check(app._ad_pill_max == 211,
-              '右边界最大只缩到 %s(差 2px < AD_PILL_SHRINK=%d) -> 第一把尺子确实没响'
-              % (app._ad_pill_max, AD_PILL_SHRINK))
+        check(app._ad_pill_min == 209,
+              '右边界最窄缩到 %s(差 2px < AD_PILL_SHRINK=%d) -> 第一把尺子确实没响'
+              % (app._ad_pill_min, AD_PILL_SHRINK))
         check(app._ad_white_max == 830 and app._ad_pill_left == 32,
               '基准取的是"字最多"那帧: 白峰值=%s 左边界=%s' % (app._ad_white_max, app._ad_pill_left))
         check(CLICKS == [CLOSE], '尺子二只该点一次[关闭]: %s' % (CLICKS,))
@@ -319,9 +321,9 @@ try:
             r = app3._ad_tick(load('shots/watch_124711.png'))
             check(r == 'wait', '顶栏被广告盖住的帧竟然动了手 (t+=%.0f -> %s)' % (dt, r))
         check(not CLICKS and app3._ad_white_max == 830 and app3._ad_pill_left == 32
-              and app3._ad_pill_max == 211,
+              and app3._ad_pill_min == 211,
               '盖住顶栏的帧两把尺子都不作数, 基准也没被污染: 白峰值=%s 左=%s 右峰值=%s 落点=%s'
-              % (app3._ad_white_max, app3._ad_pill_left, app3._ad_pill_max, CLICKS))
+              % (app3._ad_white_max, app3._ad_pill_left, app3._ad_pill_min, CLICKS))
         check(app3._ad_pill == (257, 157, 222),
               '门闩生效的前提是"确实量了这一帧再判它不可信", 读数是 %s' % (app3._ad_pill,))
     finally:

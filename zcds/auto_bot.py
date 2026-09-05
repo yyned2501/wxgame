@@ -148,7 +148,15 @@ class App:
         # 看广告窗口(2026-09-03 12:47 定案): _ad_until 非 0 = 窗口开着, 主循环交 _ad_tick 管
         self._ad_t0 = 0.0                # 本轮广告开始时刻
         self._ad_until = 0.0             # 窗口硬上限时刻(= 开始 + AD_WATCH_TOTAL)
-        self._ad_pill_max = 0            # 本场广告左上状态药丸见过的最大右边界(判"放完了")
+        self._ad_pill_min = 0            # 本场广告左上状态药丸见过的**最窄**右边界(判"放完了")
+                                          # 🔴 2026-09-05 真机 R49 事故后改 min 跟踪: 倒计时宽度
+                                          # 单调递减, max 会被首帧渲染动画(329)污染成基准,
+                                          # 下一帧真实宽度(211)就触发"329->211"假缩窄,
+                                          # 12s 误点关闭。min 跟踪: 首帧 329 -> 二帧 211 -> pill_min=211,
+                                          # 211-211=0 不缩窄; 真实"已获得奖励"164 -> 211-164=47 触发。
+        self._ad_pill_first = None       # 🔴 2026-09-05 R49 事故: 首帧渲染动画(329)污染基准,
+                                          #   第 2 帧才建立 pill_min = min(首, 次), 差过大就丢首帧
+        self._ad_pill_samples = 0         # 药丸样本计数(第 1 帧存 first, 第 2 帧起比较)
         self._ad_white_max = 0           # 第二把尺子: 本场药丸带内白像素峰值(=字数最多的那帧)
         self._ad_pill_left = None        # 峰值帧的药丸左边界, 用来识破"广告画面盖住顶栏"的假读数
         self._ad_low_t0 = 0.0            # 白像素开始持续偏低的时刻(0 = 当前不偏低)
@@ -257,7 +265,7 @@ class App:
         self._ad_t0, self._ad_until = now, now + self.AD_WATCH_TOTAL
         # 记下 arm 时站在哪一页: _ad_tick 靠它区分"广告在加载(还是这页)"和"已经跑到别的页(广告没来)"
         self._ad_from = self.cur_page
-        self._ad_pill_max, self._ad_logged = 0, now
+        self._ad_pill_min, self._ad_pill_first, self._ad_pill_samples, self._ad_logged = 0, None, 0, now
         self._ad_white_max, self._ad_pill_left, self._ad_low_t0, self._ad_pill = 0, None, 0.0, ()
         self._ad_seen, self._ad_closing = False, False
         self._ad_shot_next, self._ad_shot_n = now + 1.0, 0
@@ -394,19 +402,34 @@ class App:
                     if wc > self._ad_white_max:
                         # "字最多"的那一帧才是基准(倒计时一定比放奖后长), 左边界跟着它走
                         self._ad_white_max, self._ad_pill_left = wc, pl
-                    self._ad_pill_max = max(self._ad_pill_max, pr)
-                    shrink = self._ad_pill_max - pr >= AD_PILL_SHRINK
-                    if shrink:
-                        how = f'药丸缩窄 {self._ad_pill_max}->{pr}'
-                    elif wc <= self._ad_white_max * (1 - AD_PILL_SHRINK_PCT):
+                    if self._ad_pill_samples == 0:
+                        # 首帧: 先存着, 不下结论
+                        self._ad_pill_first = pr
+                        self._ad_pill_samples = 1
+                    elif self._ad_pill_samples == 1:
+                        # 第 2 帧: pill_min = min(首, 次); 差过大就丢首帧(动画外层)
+                        self._ad_pill_min = min(self._ad_pill_first, pr)
+                        self._ad_pill_samples = 2
+                    else:
+                        # 先用更新前的 pill_min 算 shrink1, 再决定要不要把 pill_min 往下踩
+                        shrink1 = self._ad_pill_min > 0 and self._ad_pill_min - pr >= AD_PILL_SHRINK
+                        if pr < self._ad_pill_min:
+                            self._ad_pill_min = pr
+                    # 第二把尺子: 白像素变少 (跟右边界并列, 独立触发)
+                    shrink2_held = False
+                    if wc <= self._ad_white_max * (1 - AD_PILL_SHRINK_PCT):
                         if not self._ad_low_t0:
                             self._ad_low_t0 = now
                         elif now - self._ad_low_t0 >= AD_PILL_LOW_HOLD:
-                            shrink = True
-                            how = (f'药丸字变少 {self._ad_white_max}->{wc}px 持续 '
-                                   f'{now - self._ad_low_t0:.0f}s')
+                            shrink2_held = True
                     else:
                         self._ad_low_t0 = 0.0
+                    shrink = locals().get('shrink1', False) or shrink2_held
+                    if shrink:
+                        how1 = f'药丸缩窄 {self._ad_pill_min}->{pr}' if locals().get('shrink1', False) else ''
+                        how2 = (f'药丸字变少 {self._ad_white_max}->{wc}px 持续 '
+                                f'{now - self._ad_low_t0:.0f}s') if shrink2_held else ''
+                        how = (how1 + ' ' + how2).strip() or f'放完判据命中'
             if waited >= self.AD_WATCH_MIN and shrink:
                 how += ' = 已获得奖励'
                 logging.info(f'[广告] 看了 {waited:.0f}s, {how} -> 点[关闭] {pos}')
