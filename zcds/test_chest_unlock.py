@@ -10,7 +10,9 @@ r"""宝箱槽位[免费解锁] vs [要宝石] 的角标判据回归(2026-09-03 1
 判据: 只有"此刻能免费操作"的格子, 卡片右上角才画红感叹号 ❗(实测 x=槽中心+36..+52 / y735..748)。
 本脚本钉死四件事:
   [1] 语料全量: 每格角标像素数只能是 0 或 >=CHEST_BADGE_MIN, 不许有骑墙值(否则阈值站在悬崖上)
-  [2] 码表自洽: o 必带角标 / a. 必不带 / U<->带角标 / p<->不带
+      帧尺子 = has_pvp 且 not nav_covered: 广告等待浮层(黑条)只盖 y>=845, [玩家对战]金按钮还露着,
+      但宝箱卡片底部白字被切 -> 这类帧真机路由根本判不成大厅, 测试也不许当它是大厅帧(证据见 nav_covered)
+  [2] 码表自洽: o/U 必带角标 / a/. 与 p 必不带(一条判据只计一次 -> 违反数 == 槽数)
   [3] 面板配对复核: 每张 chest_info 面板帧配到它前面最近(<=60s)的那张 lobby 帧,
       免费面板(带内宝石像素 0) <=> 那张大厅帧有 o/U 格; 付费面板(宝石像素 362) <=> 那张帧有 p 格
   [4] 行为: 有免费格只点免费格; 一格免费都没有 -> 试探点一格 p(用户口径, 面板宝石硬闸兜底); p 全拉黑 -> 改打对战
@@ -56,9 +58,42 @@ LP = LobbyPage.__new__(LobbyPage)
 CI = ChestInfoPage.__new__(ChestInfoPage)
 
 
-def is_lobby(img):
-    """大厅帧尺子: [玩家对战]那颗金按钮必须在(语料里与点色指纹 100% 同步)"""
+def has_pvp(img):
+    """[玩家对战]金按钮在 = 这张帧"看起来像大厅"。它**不是**最终尺子: 广告浮层帧也过(按钮画在黑条之上)。"""
     return img.size == pp.REF and color_button(img, PVP_BOX, PVP_COLOR, PVP_MIN_PX) is not None
+
+
+# 🔴 帧尺子必须再叠一条"底部导航栏没被盖住", 否则测试比真机松 —— 2026-09-05 23:5x 假红实录:
+#   现象: [1][2] 报"五档与角标像素完全自洽 违反=6", 定位到 3 个槽(shots_live/ads_141917_n /
+#     ad_153914_n / ads_193653_n): st=.... 而 badge=[0,0,126,0] / [0,125,0,0] / [0,0,126,0]。
+#   定性: 它们是 §35.1 点 a 格后 auto_bot 起的**广告窗口密拍 dump**(帧名 ad_*/ads_*_n.png, 现存 2542 张),
+#     黑浮层([广告|30秒后可获得奖励]...[关闭])从 y~845 铺到窗底 -> 宝箱卡片底部的白字按钮带(y838..882)
+#     被切掉 -> chest_states 读成 '.', 而卡片右上角那颗红 ❗(y735..748)露着 -> badge 125/126
+#     与真 .UUU 帧的 120..127 **同一簇**(不是骑墙值, 判据没错, 帧才是脏的)。
+#   实测(scratch/patch/_cu_band.py): 本页点色指纹 20 个判色点里的近黑数
+#     正常大厅帧 0/20 (y845..905 暗像素 2.9% / y905..1005 12.5%)
+#     上述密拍帧 20/20 (y845..905 暗 90.7~97.1% / y905..1005 90.3~100%)
+#   => 真机路由对这些帧**一个指纹点都不中**, 永远不会进 LobbyPage.act() —— 判据侧无缺口,
+#      要修的是测试的帧筛选: 让它和真机一样"看得见导航栏"才算大厅帧。
+#   阈值取 15/20 而不是 20/20: 两簇实测 0 vs 20, 留余量是给"浮层只盖半屏"的改版, 不是给骑墙值开口子。
+NAV_PRINT_POINTS = LobbyPage.prints[0]
+NAV_COVER_BLACK_MAX = 45    # 单点地板: R/G/B 全 <45 记为"被黑条盖住"
+NAV_COVER_MIN_POINTS = 15   # 20 个判色点 >=15 个变黑 -> 判为浮层帧
+
+
+def nav_covered(img):
+    """底部导航栏被广告等待浮层(黑条 + [关闭]药丸)盖住 -> 宝箱行不可信, 这张帧不参与大厅码表"""
+    n = 0
+    for x, y, _c in NAV_PRINT_POINTS:
+        px = img.getpixel((x, y))[:3]
+        if max(px[0], px[1], px[2]) < NAV_COVER_BLACK_MAX:
+            n += 1
+    return n >= NAV_COVER_MIN_POINTS
+
+
+def is_lobby(img):
+    """大厅帧尺子: [玩家对战]金按钮在 **且** 底部导航栏未被广告浮层盖住(证据见 nav_covered 上方)"""
+    return has_pvp(img) and not nav_covered(img)
 
 
 def ts6(stem):
@@ -96,15 +131,25 @@ def main():
     lobby = []                       # (ts, 帧名, 状态码, 逐槽角标像素)
     hist = Counter()
     n_slot = n_gap = n_rule = 0
+    n_cov = n_cov_ad = 0            # 被浮层排除的"伪大厅"帧: 总数 / 其中 ad 窗口密拍 dump
+    cov_names = []                  # 非 dump 命名的浮层帧(出现就得人工看过才许放行)
     print('[1][2] 全量语料: 角标像素两簇 + 五档码表自洽')
     for p in paths:
         try:
             img = img_of(p)
         except Exception:
             continue
-        if not is_lobby(img):
-            continue
         stem = os.path.basename(p).rsplit('.', 1)[0]
+        if not has_pvp(img):
+            continue
+        if nav_covered(img):
+            # 广告浮层盖住底部 -> 宝箱行不可信, 不参与码表自洽(真机路由同样不会把这帧判成大厅)
+            n_cov += 1
+            if re.match(r'ads?_\d{6}_n$', stem):
+                n_cov_ad += 1
+            elif len(cov_names) < 8:
+                cov_names.append(stem)
+            continue
         st = LP.chest_states(img)
         bd = [LP.badge_pixels(img, cx) for cx, _ in CHEST_SLOTS]
         t = ts6(stem)
@@ -116,13 +161,16 @@ def main():
             has = bd[i] >= CHEST_BADGE_MIN
             if 0 < bd[i] < CHEST_BADGE_MIN:
                 n_gap += 1
+            # 一条判据只计一次。旧版这两条条件重叠: "o/U 该带角标却没带" 与 "a/. 不该带却带了"
+            #   对同一个 '.'+带角标 的槽是同一件事 -> 一槽计 2 次, 3 个槽报成"违反=6", 数字对不上现场
             if has != (code in 'oU'):
-                n_rule += 1
-            if code in 'a.' and has:
                 n_rule += 1
     check(n_slot >= 500, '大厅帧够多(逐槽观测数)', 'n_slot=%d' % n_slot)
     check(n_gap == 0, '角标像素没有 0..%d 之间的骑墙值' % CHEST_BADGE_MIN, '骑墙=%d' % n_gap)
-    check(n_rule == 0, 'o/U/p/a/. 五档与角标像素完全自洽', '违反=%d' % n_rule)
+    check(n_rule == 0, 'o/U/p/a/. 五档与角标像素完全自洽', '违反=%d 槽=%d' % (n_rule, n_slot))
+    check(n_cov >= 1 and not cov_names,
+          '广告浮层帧由 nav_covered 排除(测试帧尺子 == 真机路由)',
+          '排除=%d ad密拍dump=%d 非dump命名=%s' % (n_cov, n_cov_ad, cov_names))
     check(min(hist.get(k, 0) for k in 'Upoa') >= 40, '四种状态都有足够样本', str(dict(sorted(hist.items()))))
 
     print('')
@@ -138,6 +186,8 @@ def main():
            % (len(ambig), sorted(ambig)))
     pairs = set()
     n_amb_skip = 0
+# 第一遍: 配对, 收集 panel -> lobby 配对
+    _all_pairs = []
     for p in paths:
         stem = os.path.basename(p).rsplit('.', 1)[0]
         if 'chest_info' not in stem:
@@ -162,7 +212,17 @@ def main():
         if near[3] in ambig:
             n_amb_skip += 1
             continue
-        pairs.add((t, gem_cost_pixels(img, btn[0], btn[1]) >= GEM_MIN, near[2], near[1]))
+        _all_pairs.append((t, gem_cost_pixels(img, btn[0], btn[1]) >= GEM_MIN, near[2], near[1], near[3]))
+    # 第二遍: 同一大厅秒被 >= 2 张面板配对也当歧义 (R53 实证: 3 张面板 012039/012053/012122
+    # 都配到 012039 那一张大厅帧, 但 lobby 已经被多次点击/状态变化, 单一快照不可靠)
+    _paired_counts = {}
+    for _, _, _, _, lt in _all_pairs:
+        _paired_counts[lt] = _paired_counts.get(lt, 0) + 1
+    stale_lobby = {k for k, v in _paired_counts.items() if v > 1}
+    n_stale_skip = sum(_paired_counts[k] for k in stale_lobby)
+    pairs = {(t, p, st, lstem) for (t, p, st, lstem, lt) in _all_pairs if lt not in stale_lobby}
+    print('     同秒多面板歧义(lobby 快照被复用 n>=2 次) skip=%d ambig=%s'
+          % (n_stale_skip, sorted(stale_lobby)))
     n_free = n_paid = v_free = v_paid = 0
     for t, paid, st, lstem in sorted(pairs):
         if paid:

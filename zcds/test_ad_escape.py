@@ -114,8 +114,8 @@ print('[3] 连喂 %d 帧同一张广告页 -> 开"看广告窗口", 但**一帧�
 check(page is None and not acted and clicks == [],
       '刚撞见广告页就点[关闭] %s -> 会被判"提前关闭", 奖励作废 (acted=%s)' % (clicks, acted))
 check(app._ad_until > 0, '认出广告页却没开看广告窗口 (_ad_until=%s)' % app._ad_until)
-check(app._ad_pill_max == ad_pill_right(load(AD)),
-      '开窗时该记下本场药丸最宽 %s, 实际 %s' % (ad_pill_right(load(AD)), app._ad_pill_max))
+check(app._ad_pill_first == ad_pill_right(load(AD)),
+      '开窗时第 1 帧就记下本场药丸宽度 %s, 实际 %s' % (ad_pill_right(load(AD)), app._ad_pill_first))
 check(ocr_ran is False and OCR_CNT[0] == 0, '自救全程不花一次 OCR (本段累计 %d)' % OCR_CNT[0])
 
 print('[4] 放完(药丸缩窄)才动手: 伪造"已经看了 20s" -> 点它自己的[关闭]')
