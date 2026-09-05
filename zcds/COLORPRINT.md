@@ -2637,3 +2637,27 @@ zero_ocr 5336 帧认错页 0 / 盲区 2(上界 26), popup_escape 回到 <=3。
 
 **R49 旧代码总账**: escape-guide=123(挽留框误触)、真放完=1、giveup=0。R50 跑在
 修好的代码上, 重点验证「药丸缩窄只发生在真放完, 不再被首帧动画触发」。
+
+### 35.7.3 引导手检测器全黑屏闸门(真机 R50 / R52)
+
+R49(旧 pill_min)已修, R50 仍中招: §35.7.1 已记录的「挽留框白面板被引导手误识别」问题
+实锤——R50 开局 16 次 escape-guide 循环。R49 同样的现场帧 `dbg_028_unknown_001239.png`:
+- 整帧亮度均值 **32.7** (挽留框: 黑色 + 中间一小块白面板)
+- 大厅/战斗页均值 96.8 / 159.6
+- §16 引导手检测器对"白底大面板+黑字"误触, 给出候选 (369,629) = "继续" + (275,535) = 标题
+- 点 (369,629) = **重置了已结束的残帧广告** -> 挽留框循环
+- `_flag_stuck` 兜住(45s 睡), 但只是延缓、不解根因
+
+**两层防御**:
+- **第 0 优先 OCR 路由**: 实际 R52 真机开局直接被 OCR 认成 `ad_popup`(匹配"挽留"等关键词),
+  `pages/ad_popup.py` 正确点 (276,493) = 继续观看(§19 挽留框策略反转), 根本没走到引导检测器
+- **引导检测器全黑屏闸门**(`pages/base.py guide_targets()`): 整帧 mean < 35 直接返空,
+  兜底任何未来走到这里又被误触的路径
+
+阈值 35 = (32.7 挽留框 + 96.8 大厅) 中点, 余量 12.7 px。回归锁 `test_side_page_escape.py`
+的"过渡帧"已是 is_transition 拦在前面, 不再进 guide_targets; `test_ad_watch / test_ad_escape /
+test_fps_popup / test_popup_escape / test_cpu_offline` 等 ad 相关测试 refactor 中
+`guide_modal` 不会触黑屏假阳性(对话框自带 is_transition 早返)。
+
+R52 真机开局 60s 现场: `ad_popup ocr 1.60 -> 挽留框点 继续观看 (276, 493)`,
+全链路零 guide_targets 误触。剩下的回归门是等 runall。
