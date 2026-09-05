@@ -176,8 +176,11 @@ for tag, cond, why in [
      no(kb.unclaimed_note(_pair('result', 130000, 130000, 1, 2), 0.067, None)), 'd'),
     ('有页认领(src 非空) -> 不放行(认错页零容忍)',
      no(kb.unclaimed_note(_pair('result', 140000, 140001), 0.99, 'soft')), 'e'),
-    ('有页贴着软命中门限抢(0.20) -> 不放行',
-     no(kb.unclaimed_note(_pair('result', 150000, 150001), 0.20, None)), 'f'),
+    # f/i 边界改口径(2026-09-05 R44): "贴着 0.20 抢"从来不是真抢 —— 0.20 = 15 点指纹里 3 点,
+    # 是量子噪声位(彗星帧实测就是 3/15)。真危险的是中段"两通道吵架"(点色高分顶着一个页、
+    # OCR 却报另一个), 所以 f 挪到 0.5 钉中段, 0.20 含边界放行改由 i 钉。
+    ('两通道吵架的中段分(0.5, 顶候选 != 标签页) -> 不放行',
+     no(kb.unclaimed_note(_pair('result', 150000, 150001), 0.5, None)), 'f'),
     # 2026-09-04 R40 教训: --shots 是取证倒数计数器, 用完就不存 dbg_ 帧了, 而 ocr_ 帧还在存。
     # 当时 ocr_battle_124311.png 孤零零一张 -> 闸门误红。钉住"ocr_ 帧自证"这条新规则,
     # 同时钉住"dbg_ 帧仍然必须有兄弟"(它没有自证能力: 页名是点色判的, 不是 OCR 判的)。
@@ -185,8 +188,27 @@ for tag, cond, why in [
      ok(kb.unclaimed_note(_mk('ocr_result_170000.png', 7), 0.067, None)), 'g'),
     ('dbg_ 帧单独存在(没有 ocr_ 兄弟) -> 不放行(点色判的页名不能自证)',
      no(kb.unclaimed_note(_mk('dbg_9_result_171000.png', 7), 0.067, None)), 'h'),
+    ('恰好 0.20(= 15 点里 3 点的噪声位, R44 彗星帧实测) + 凭证 -> 放行',
+     ok(kb.unclaimed_note(_pair('result', 180000, 180001), 0.20, None)), 'i'),
 ]:
     check(cond, tag)
+
+# j/k: R44 开箱爆奖帧的形状 —— 高分(0.833)部分命中只许"点色顶候选 == OCR 标签页"放行;
+#     同一帧谎报成别的页(两通道吵架)必须照旧不放行。帧不在(shots_live 不进仓库)就跳过。
+_R44 = os.path.join(ROOT, 'shots_live', 'dbg_127_chest_open_142016.png')
+if os.path.exists(_R44):
+    _pg, _sc, _src = match_print(ALL_PAGES, load(_R44))
+    check(_pg is None and abs(_sc - 0.833) < 0.01,
+          'R44 开箱帧前提: 点色没人认领且顶候选分 ~0.833 (实际 %s %.3f)' % (_pg, _sc))
+    check(kb.unclaimed_note(_R44, _sc, _src) is not None,
+          'j) 0.833 + 逐字节 ocr_ 兄弟 + 顶候选==标签页(chest_open) -> 放行')
+    import shutil
+    _lie = os.path.join(TMPD, 'ocr_battle_142016.png')
+    shutil.copyfile(_R44, _lie)
+    check(kb.unclaimed_note(_lie, _sc, _src) is None,
+          'k) 同一帧谎报名字(标签 battle != 顶候选 chest_open) -> 两通道吵架, 不放行')
+else:
+    print('  SKIP R44 开箱爆奖帧不在(shots_live 不进仓库), j/k 两条未执行')
 
 # 现场那一对: 压暗帧必须被认成盲区, 它 9 秒前的正常帧必须"不放行"(它本来就能定页)
 if os.path.exists(DARK):

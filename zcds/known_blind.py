@@ -14,7 +14,10 @@
 128.6~160.7 双峰(差 32 灰阶), 任何一条亮度阈值都会误伤或放水。
 
 所以放行只看**一条独立证据**, 四个条件全满足才算, 少一条照旧报回归:
-  1) 点色**谁都没认领**(src is None) 且全表最高分 < SOFT_MIN_MARGIN —— 有页贴着门限抢就不许放过
+  1) 点色**谁都没认领**(src is None) 且全表最高分 <= SOFT_MIN_MARGIN(含边界; 2026-09-05 R44
+     把"恰好 0.20 = 15 点指纹里 3 点"的噪声帧算进噪声) —— 或者分数更高, 但**点色顶候选 ==
+     OCR 标签页**(两条独立通道认同同一页, 见 unclaimed_note docstring 与 §35.6); 两通道吵架的
+     中间带必须人看
   2) 文件名是 bot 自己存的证据帧: dbg_NNN_<页>_<hhmmss>.png 或 ocr_<页>_<hhmmss>.png
   3) <页> 是**已经有指纹**的页 —— 冒出新页面必须报(新页面的标签只会是 unknown, 过不了这条)
   4) 有**独立第二份证据**说明真机当场拿全图 OCR 复核过、认回来的还是这一页
@@ -111,20 +114,52 @@ def paired_evidence(path):
     return None
 
 
+def top_fp_page(path):
+    """点色全表的最高候选 (页名, 比例)。route_prints 只把分数交出来, 页名要自己问。
+    只在"这一帧没人认领、正要决定是否记账放行"时调用, 一帧 ~2ms, 不在热路径。"""
+    from PIL import Image
+    import colorprint as cp
+    im = Image.open(path).convert('RGB')
+    if im.size != cp.REF_SIZE:
+        im = im.resize(cp.REF_SIZE)
+    arr = cp.to_arr(im)
+    best, name = 0.0, None
+    for p in ALL_PAGES:
+        for g in p.fingerprints():
+            s = sum(1 for (x, y, c) in g if cp.is_color(arr, x, y, c)) / len(g)
+            if s > best:
+                best, name = s, p.name
+    return name, best
+
+
 def unclaimed_note(path, score, src, margin=SOFT_MIN_MARGIN):
-    """点色定不出页的一帧: 是设计内盲区 -> 返回理由(会被打印); 否则 None = 必须算进闸门"""
+    """点色定不出页的一帧: 是设计内盲区 -> 返回理由(会被打印); 否则 None = 必须算进闸门
+
+    2026-09-05 R44 扩了一次口径。原来只认"整表压暗"(score < margin), 但真机还有两种
+    同族形状卡在门限上:
+      * chest_open 开箱爆奖盖住中心十字 -> 0.833(差 5 点, 顶候选就是它自己, OCR 复核同页);
+      * 全屏彗星把 battle 三单元打掉, 别的页凑巧中 3/15 = **恰好 0.20** 贴在上界。
+    放行条件改为: 有凭证(自证/逐字节兄弟) 且 [ 全表噪声(score<=margin, 含边界)
+    或 点色顶候选 == OCR 标签页(两条独立通道认同同一页) ]。
+    危险区不变: 中间带(>margin 且顶候选 != 标签页)= 两通道吵架, 照旧报红必须人看。"""
     if src is not None:
         return None                            # 有页认领 -> 走正常判定(认错页零容忍)
-    if score >= margin:
-        return None                            # 有页贴着软命中门限抢 -> 必须人看
     q = paired_evidence(path)
     if not q:
-        return None
+        return None                            # 交不出凭证的帧, 无论分数都不许记账放行
+    if score > margin:
+        # 高部分命中: 只许"点色顶候选 == OCR 标签页"这一条更强的证据放行(§35.6)
+        name, top = top_fp_page(path)
+        lab = parse(path)
+        if not lab or name != lab[0]:
+            return None                        # 两通道吵架 -> 必须人看
+        return ('§35.6 高部分命中动画帧: 点色顶候选 %s(%.3f) == OCR 判决页(两条通道认同身份), '
+                '代价 = 一次全图 OCR, 不会点错 -> %s' % (name, top, os.path.basename(str(path))))
     if q == 'self':
-        return ('§32 压暗盲区: 点色无人认领(全表最高分 %.3f < %.2f), '
+        return ('§32 压暗盲区: 点色无人认领(全表最高分 %.3f <= %.2f), '
                 '本帧就是 bot 存证的 OCR 判决帧, 页名 = 真机当场全图 OCR 的判决 -> %s'
                 % (score, margin, os.path.basename(str(path))))
-    return ('§32 压暗盲区: 点色无人认领(全表最高分 %.3f < %.2f), '
+    return ('§32 压暗盲区: 点色无人认领(全表最高分 %.3f <= %.2f), '
             '真机同一次 step 的全图 OCR 复核回同一页 -> %s 与本帧逐字节相同'
             % (score, margin, q))
 
