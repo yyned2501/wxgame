@@ -227,8 +227,11 @@ class App:
     #   "广告 | 27 秒后可获得奖励" -> 211 / "...8 秒..." -> 204 / "广告 | 已获得奖励" -> 164
     #   同一句文案在不同广告 SDK 下宽度不同(另一路实测 209) -> 只能跟本场最宽比, 见 pages.base
     AD_WATCH_MIN = 12.0       # 这之前绝不动手: 提前关闭 = 奖励作废 + 弹挽留框
-    AD_WATCH_MAX = 40.0       # 实拍倒计时 30s + 尾帧; 等满这么多秒就认定"放完了"
-    AD_WATCH_TOTAL = 100.0    # 一条广告最多占用主循环这么久, 超了撒手(防死等)
+    # 🔴 用户 2026-09-05 定案「广告得看满时间, 不能中途退出」-> 旧 AD_WATCH_MAX=40s
+    #   "等满就认定放完了"删除: **时间不是放完的证据**, 只有药丸缩窄(§19.3 两把尺子)才算。
+    #   拿不到缩窄证据 -> 等到 AD_WATCH_TOTAL 撒手; 撒手 = 一个键都不点交回主循环,
+    #   广告若还在放, 黑屏帧会被 §18 重新 arm 继续等 —— 宁可慢, 不可打断。
+    AD_WATCH_TOTAL = 100.0    # 一条广告最多占用主循环这么久, 超了撒手(防死等; 撒手不点击)
     AD_CLOSE_RETRY = 3.0      # 点过[关闭]后每这么多秒复检: 还赖在广告页就再点一次
     AD_CLOSE_CONFIRM = 12.0   # 关闭动作最多盯这么久(正常下一帧就已经离开广告页)
     AD_NOT_AD_AT = 4.0        # 等了这么久、且已经硬命中**别的**游戏页 -> 认定没进广告, 撒手
@@ -264,8 +267,8 @@ class App:
         self._ad_close_t = self._ad_retry_at = 0.0
         self._ad_claim_retry = 0
         logging.info(f'[广告] 开始看广告({why}): 期间不定页/不跑 OCR/不点击; '
-                     f'放完判据 = 状态药丸缩窄 或 等满 {self.AD_WATCH_MAX:.0f}s; '
-                     f'最长 {self.AD_WATCH_TOTAL:.0f}s')
+                     f'放完判据 = 状态药丸缩窄(唯一证据, 时间不算); '
+                     f'最长 {self.AD_WATCH_TOTAL:.0f}s, 超了撒手(不点任何键)')
 
     def _ad_overlay_frac(self, img):
         """只在"准备撒手/重试"的那一刻问一次屏幕通道: 现在盖在窗口上的东西 PrintWindow 看得见吗?
@@ -404,8 +407,8 @@ class App:
                                    f'{now - self._ad_low_t0:.0f}s')
                     else:
                         self._ad_low_t0 = 0.0
-            if waited >= self.AD_WATCH_MIN and (shrink or waited >= self.AD_WATCH_MAX):
-                how = (how + ' = 已获得奖励') if shrink else f'等满 {self.AD_WATCH_MAX:.0f}s'
+            if waited >= self.AD_WATCH_MIN and shrink:
+                how += ' = 已获得奖励'
                 logging.info(f'[广告] 看了 {waited:.0f}s, {how} -> 点[关闭] {pos}')
                 self.click(*pos)
                 self._ad_closing = True

@@ -246,16 +246,20 @@ try:
     check(CLICKS == [CLOSE, CLOSE], '整个窗口只该点[关闭](放完 1 次 + 重补 1 次): %s' % (CLICKS,))
     check(app._ad_pill_max == wide, '本场最宽药丸 %s != 实测 %s' % (app._ad_pill_max, wide))
 
-    # 等满 AD_WATCH_MAX 也要能收手: 有的广告 SDK 全程不缩窄(拿不到倒计时读数)
+    # 🔴 2026-09-05 用户定案「广告得看满时间, 不能中途退出」: 旧锁"等满 40s 也当放完 -> 点[关闭]"
+    #   翻转为 **时间不是放完的证据**: 没有药丸缩窄, 等过旧 40s 上限也只许继续等、一个键都不点,
+    #   直到 AD_WATCH_TOTAL 撒手(撒手 = 不点击, 见下一段总闸测试)。
     CLICKS[:] = []
     FT.t = 5000.0
-    app.start_ad_watch('回归-等满')
+    app.start_ad_watch('回归-时间不算证据')
     same = 'shots/ad_popup_live122400.png'
     FT.t += 8
     check(app._ad_tick(load(same)) == 'wait', '才看 8s(<AD_WATCH_MIN)就点[关闭] -> 奖励作废')
     FT.t += 40
-    check(app._ad_tick(load(same)) == 'acted', '等满 AD_WATCH_MAX 还不收手')
-    check(CLICKS == [(472, 90)], '等满后点的应是它自己的[关闭]: %s' % (CLICKS,))
+    check(app._ad_tick(load(same)) == 'wait', '等过旧 40s 上限、无缩窄证据 -> 不许中途退出')
+    FT.t += 40
+    check(app._ad_tick(load(same)) == 'wait', '48s 再一帧仍无证据 -> 继续等, 不点')
+    check(CLICKS == [], '全程没放完证据就该一个键都没点: %s' % (CLICKS,))
 
     # 总闸: 一条广告不许把主循环锁死超过 AD_WATCH_TOTAL
     CLICKS[:] = []
