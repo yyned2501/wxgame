@@ -490,6 +490,15 @@ def guide_targets(img):
     调用方负责"点了没反应就换下一个候选"(见 pages/unknown.py 的画面签名升级表):
     引导有 N 步, 每一步的高亮目标都不一样, 任何单一判据都不可能一次点到底。
     """
+    # 🔴 2026-09-05 R49/R50 真机: 挽留框「暂未获得奖励 是否继续观看视频」(黑底白面板)
+    #   上的"继续"被引导手检测器误识别为新手手 -> 点 (369,629) 反而把广告"续"回播放 ->
+    #   下一帧弹回挽留框, 循环。修法: 全黑帧(整屏 max<25)直接返回空, 让 ad_popup/OCR 接力。
+    import numpy as np
+    arr = np.asarray(img) if not isinstance(img, np.ndarray) else img
+    if arr.size:
+        # 取整帧亮度均值: 挽留框约 32.7(白色面板 + 大面积黑色), 正常页 > 80
+        if float(arr.mean()) < 35.0:
+            return []
     ok, box = guide_modal(img)
     if not ok:
         return []
