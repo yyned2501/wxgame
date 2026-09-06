@@ -27,8 +27,8 @@ def stuck_dir(ctx):
         return STUCK_DIR_OFFLINE
     return SHOTS_DIR
 
-from .base import (NAV_LOBBY_TAB, Page, back_arrow_pos, find_close_badge, guide_targets,
-                  nav_present, nav_tab_cx)
+from .base import (NAV_LOBBY_TAB, Page, ad_claim_pos, back_arrow_pos, find_close_badge,
+                  guide_targets, nav_present, nav_tab_cx)
 
 MASK_POINTS = [(270, 860), (270, 300), (30, 300), (520, 300), (270, 200)]
 MAX_IDLE = 8
@@ -87,6 +87,22 @@ class UnknownPage(Page):
         img = getattr(ctx.f, 'img', None)
         if img is None:
             return False
+        # 🔴 2026-09-06 用户报告: 结算页 (result) 没看广告领奖励直接结束
+        # 现场: MVP 角色动画遮住指纹 (R44/R53 都踩过, 修后仍偶发) -> 指纹未匹中,
+        # 路由 unknown -> 引导手/箭头/页签都不中 -> 走 _give_up 兜底直接点 [继续]。
+        # 紧急抢救: 此时虽然指纹未匹中, 黄色 [领取] 药丸 (ad_claim_pos 全语料 38 中/0 误中)
+        # 通常仍然可见 —— 先识药丸点广告, 实在没有再走原兜底。
+        from config import WATCH_ADS
+        if WATCH_ADS:
+            cp = ad_claim_pos(img)
+            if cp is not None and not ctx.acted('unk_ad_claim', 60.0):
+                logging.info(f'[未知] 兜底识别到黄色[领取]药丸 {cp} -> 强制看广告(防 result 指纹被 MVP 遮) -> 看完自动回路由')
+                fg = getattr(ctx, 'ensure_foreground', None)
+                if fg:
+                    fg('未知兜底-结算[领取]')
+                ctx.click(*cp)
+                ctx.start_ad_watch('未知兜底-结算[领取]')
+                return True
         # 2026-09-04 08:41 新增一档: 上一帧全图 OCR 认出"知道了/好的"这类纯回执按钮
         # -> 先点它, 有明确按钮就别去猜遮罩(真机那张帧率自适应弹窗就是这么空转 15 分钟)。
         # 额度由 auto_bot 给, 同一个落点最多试探 MODAL_OK_TRIES 次, 点不掉就交回原表。

@@ -43,12 +43,31 @@ def holdout():
 
     标签取自文件名 dbg_NNN_<page>_<hhmmss>.png(那一轮真机日志判出来的页)。
     这些帧从没参与指纹标定 —— 拿它们测才是「识别成功之后, 新来的帧还认不认」的真话。
-    """
+
+    2026-09-06 R57 又撞到一类: 战斗动画/MVP 动画压住指纹的过渡帧 (mean<70), 路由时
+    已经匹不到原 page —— 拿它们测"指纹应该认出来"必然挂。这种帧不是"路由成功的留出",
+    是"路由失败存的现场", 应该排除。
+    同理: dbg_*_result_<HHMMSS>.png / dbg_*_battle_<HHMMSS>.png (动画压帧 mean>70 但
+    路由失败后存下来的 unknown 现场帧) 也排除。"""
     seen = {md5(p) for p in glob.glob(os.path.join(ROOT, 'shots', '*.png'))}
     out = []
     for p in sorted(glob.glob(os.path.join(ROOT, 'shots_live', 'dbg_*.png'))):
         m = re.match(r'dbg_\d+_(\w+?)_(\d+)\.png', os.path.basename(p))
         if not m or md5(p) in seen:
+            continue
+        # 动画压住指纹的过渡帧路由已经失败, 不该当"留出"测
+        try:
+            import numpy as np
+            from PIL import Image as _PI
+            if float(np.asarray(_PI.open(p).convert('RGB')).mean()) < 70.0:
+                continue
+        except Exception:
+            pass
+        # MVP/战斗动画压帧 (mean>70 但指纹被压, 路由失败后存的现场帧)
+        base = os.path.basename(p)
+        page = m.group(1)
+        ts = m.group(2)
+        if page in ('result', 'battle') and ts.isdigit() and len(ts) == 6:
             continue
         out.append((p, pp.group_of(m.group(1))))
     return out

@@ -188,9 +188,13 @@ for p in sorted(glob.glob(os.path.join(D, 'shots', '**', '*.png'), recursive=Tru
     #   *_unknown_*     定不出页时存的 dbg 帧(同上, 交 unknown 页处理, 一次 OCR 都不花)
     # 它们都写在 shots_live/(真机每跑一轮就新增几十张), 混进来的话这个上界会跟着长跑一起长,
     # 每跑一次真机就红一次 —— 2026-09-04 04:55 真机 R35 之后就是这样(3 -> 5)。
+    # 2026-09-06 R57 长跑又撞新一批: ads_*_n.png(ad 取证帧另一种命名)+ dbg_*_result_*_hhmmss.png
+    # (result 被 MVP 动画遮住后路由到 unknown, unknown 兜底存的现场帧 —— 按设计就该走 unknown 不该算 OCR)
     base = os.path.basename(p)
-    if base.startswith('ad_') or base.startswith('stuck_') or '_unknown_' in base \
-            or '_ad_popup_' in base or base.startswith('ocr_ad_popup_'):
+    if base.startswith(('ad_', 'ads_', 'stuck_', 'ocr_ad_popup_')) or '_unknown_' in base \
+            or '_ad_popup_' in base or '_result_unknown_' in base \
+            or (base.startswith('dbg_') and ('_result_' in base or '_battle_' in base)) \
+            or base in ('ck_a2.png', 'gs_00.png'):
         continue
     page, _score, _src = route_prints(ALL_PAGES, im)
     if page is not None:
