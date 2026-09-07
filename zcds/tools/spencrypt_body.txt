@@ -1,14 +1,4 @@
-===== SPEncrypt1_0_Encrypt1 (defined#16984) 8 lines =====
-  (func $j46966 (type 0) (param i32 i32)
-    local.get 0
-    i32.const 65001
-    i32.const 0
-    call $j3778
-    local.get 0
-    i32.const 0
-    i32.store16 offset=28)
-
-===== URLEncodeTools..cctor (defined#28412) 92 lines =====
+===== EncodeBase64 defined#28412: 92 lines =====
   (func $j94069 (type 4) (param i32)
     (local i32)
     i32.const 10954590
@@ -79,26 +69,30 @@
     i32.const 9448780
     i32.load
     i32.load offset=92
+
+===== SPEncrypt1_0_Encrypt1 defined#16983: 11 lines =====
+  (func $j46965 (type 2) (param i32 i32 i32)
     local.get 0
-    i32.store offset=8
-    i32.const 9426748
-    i32.load
-    i32.const 4
-    call $j1001
-    local.set 0
-    i32.const 65279
-    local.set 1
+    i32.const 65001
+    i32.const 0
+    call $j3778
     local.get 0
-    local.get 1
-    i32.store8 offset=16
+    i32.const 0
+    i32.store8 offset=29
     local.get 0
     local.get 1
-    i32.const 8
-    i32.shr_u
-    i32.store8 offset=17
-    i32.const 9448780
-    i32.load
-    i32.load offset=92
+    i32.store8 offset=28)
+
+===== cctor defined#44938: 11 lines =====
+  (func $redir_fffifffi (type 178) (param f32 f32 i32 f32 f32 f32 i32) (result f32)
+    call $wasm_split.wait
     local.get 0
-    i32.store offset=12)
+    local.get 1
+    local.get 2
+    local.get 3
+    local.get 4
+    local.get 5
+    local.get 6
+    global.get $__wasm_split_waitTableId
+    call_indirect (type 178))
 
