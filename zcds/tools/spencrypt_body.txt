@@ -1,0 +1,104 @@
+===== SPEncrypt1_0_Encrypt1 (defined#16984) 8 lines =====
+  (func $j46966 (type 0) (param i32 i32)
+    local.get 0
+    i32.const 65001
+    i32.const 0
+    call $j3778
+    local.get 0
+    i32.const 0
+    i32.store16 offset=28)
+
+===== URLEncodeTools..cctor (defined#28412) 92 lines =====
+  (func $j94069 (type 4) (param i32)
+    (local i32)
+    i32.const 10954590
+    i32.load8_u
+    i32.eqz
+    if  ;; label = @1
+      i32.const 9426748
+      call $j989
+      i32.const 9448780
+      call $j989
+      i32.const 10954590
+      i32.const 1
+      i32.store8
+    end
+    i32.const 9448780
+    i32.load
+    call $j992
+    local.set 0
+    local.get 0
+    i32.const 12000
+    i32.const 0
+    call $j3778
+    local.get 0
+    i32.const 1
+    i32.store16 offset=28
+    local.get 0
+    i32.const 0
+    i32.store8 offset=30
+    i32.const 9448780
+    i32.load
+    i32.load offset=92
+    local.get 0
+    i32.store
+    i32.const 9448780
+    i32.load
+    call $j992
+    local.set 0
+    local.get 0
+    i32.const 12001
+    i32.const 0
+    call $j3778
+    local.get 0
+    i32.const 1
+    i32.store16 offset=28
+    local.get 0
+    i32.const 1
+    i32.store8 offset=30
+    i32.const 9448780
+    i32.load
+    i32.load offset=92
+    local.get 0
+    i32.store offset=4
+    i32.const 9426748
+    i32.load
+    i32.const 4
+    call $j1001
+    local.set 0
+    i32.const 65534
+    local.set 1
+    local.get 0
+    local.get 1
+    i32.store8 offset=18
+    local.get 0
+    local.get 1
+    i32.const 8
+    i32.shr_u
+    i32.store8 offset=19
+    i32.const 9448780
+    i32.load
+    i32.load offset=92
+    local.get 0
+    i32.store offset=8
+    i32.const 9426748
+    i32.load
+    i32.const 4
+    call $j1001
+    local.set 0
+    i32.const 65279
+    local.set 1
+    local.get 0
+    local.get 1
+    i32.store8 offset=16
+    local.get 0
+    local.get 1
+    i32.const 8
+    i32.shr_u
+    i32.store8 offset=17
+    i32.const 9448780
+    i32.load
+    i32.load offset=92
+    local.get 0
+    i32.store offset=12)
+
