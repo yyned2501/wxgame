@@ -207,6 +207,44 @@ class App:
         time.sleep(0.06)
         u32.SendMessageW(h, 0x0202, 0, lp)
 
+    def drag(self, x1, y1, x2, y2, steps=10, hold_each=0.02):
+        """拖动 (x1,y1) -> (x2,y2). SendMessageW 路径, 不抢前台.
+        2026-09-07 加: 给战页面自动释放技能用, 物理拖动, steps 步匀速移动.
+        2026-09-08: 末尾多发 2 次 UP 兜底(0,0 坐标强制释放), 防 SendMessageW UP 没生效导致鼠标卡住.
+        """
+        self._clicks.append((self.cur_page or '?', ('drag', int(x1), int(y1), int(x2), int(y2))))
+        if self.dry_run:
+            logging.info(f'[dry] 拖动 ({x1},{y1}) -> ({x2},{y2})')
+            return
+        import ctypes, ctypes.wintypes as wt
+        u32 = ctypes.windll.user32
+        h = self._widget()
+        if not h:
+            logging.error('找不到渲染窗口')
+            return
+        wr = wt.RECT(); u32.GetWindowRect(h, ctypes.byref(wr))
+        gr = wt.RECT(); u32.GetWindowRect(self.hwnd, ctypes.byref(gr))
+        def to_widget(x, y):
+            px = int(x) - (gr.left - wr.left)
+            py = int(y) - (gr.top - wr.top)
+            return (py << 16) | (px & 0xFFFF)
+        lp1 = to_widget(x1, y1)
+        lp2 = to_widget(x2, y2)
+        u32.SendMessageW(h, 0x0200, 0, lp1)
+        u32.SendMessageW(h, 0x0201, 0x0001, lp1)
+        time.sleep(0.05)
+        for i in range(1, steps + 1):
+            t = i / steps
+            mx = x1 + (x2 - x1) * t
+            my = y1 + (y2 - y1) * t
+            u32.SendMessageW(h, 0x0200, 0x0001, to_widget(mx, my))   # MOVE with MK_LBUTTON
+            time.sleep(hold_each)
+        u32.SendMessageW(h, 0x0202, 0, lp2)
+        # 2026-09-08 兜底: 再发 2 次 UP(原坐标 + 0,0 强制), 防止 SendMessageW UP 没生效
+        u32.SendMessageW(h, 0x0202, 0, lp2)
+        u32.SendMessageW(h, 0x0200, 0, 0)         # MOVE to (0,0)
+        u32.SendMessageW(h, 0x0202, 0, 0)         # UP at (0,0)
+
     def _widget(self):
         import ctypes, ctypes.wintypes as wt
         u32 = ctypes.windll.user32
@@ -983,6 +1021,9 @@ class App:
                 # 「连续零价签」报警的记账只许在同一场内累加(真机 R42 跨场累积误报, 见 battle.py)
                 from pages.battle import reset_blind_streak
                 reset_blind_streak()
+                # 技能按点格子累计次数释放(8/20/50), 进新战斗必须清零(2026-09-08)
+                from pages.battle import reset_battle_clicks
+                reset_battle_clicks()
         # 点色定完页、该读的字已经备好 -> 同一轮就能出手。
         # 旧版进页第一轮只补特征不动作(_skip_act), 每换一页白扔一轮, 已删除。
         acted = page.act(self)

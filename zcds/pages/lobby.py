@@ -75,8 +75,8 @@ CHEST_BADGE_OFF = (34, 730, 58, 756)   # 相对槽中心 x 的取样框, 见上�
 #   它同时补齐目前缺的直接证据 —— 语料里从来没有一张从 p 格点进去的面板帧。
 # 边界: 只试探 p。.(空槽) 一律不点; a(=[[AD]加速]) 自 2026-09-05 用户定案后走**广告优先**分支
 #   (act 第 0 步, 见 AD_ACCEL_GAP), 不再属于试探路径 —— 试探分支永远碰不到 a。
-CHEST_PROBE_P = True
-CHEST_PROBE_GAP = 25.0   # 秒; 试探点击节流(万一 p 格点了根本不出面板, 也不会刷帧点它)
+CHEST_PROBE_P = False   # 2026-09-08 用户定案: 「别用钻石开宝箱」—— 一格免费都没有时也不试探 p 格
+CHEST_PROBE_GAP = 25.0   # 秒; 试探点击节流(已无效, 留作占位)
 # [玩家对战]按钮: 也是同一套金色。外接框中心 = 落点, 所以取样框必须**只罩住按钮本体**:
 #   按钮本体实测恒定占 abs x93..268 / y651..700(n=6405~6539), 框左边界开到 x=88 就够了。
 # 坑(真机 2026-09-03 10:01 那批 lobby_live1002xx 共 10 帧): 框左边界原来开到 x=60, 于是**按钮左边那张
@@ -152,17 +152,31 @@ class LobbyPage(Page):
     def chest_states(self, img):
         """逐槽点色判状态 -> 4 字符码:
         o=[开启] U=[点击解锁]且带红角标(点它免费) p=[点击解锁]但无角标(只能花宝石)
-        a=[[AD]加速] .=空槽 —— 角标判据见 CHEST_BADGE_OFF 上方注释"""
+        a=[[AD]加速] g=绿色[开启 200💎] 立即开(花钻石, 用户 2026-09-08 定案不点)
+        . =空槽 —— 角标判据见 CHEST_BADGE_OFF 上方注释"""
         out = []
         for cx, _cy in CHEST_SLOTS:
             btn, left = self._slot_boxes(cx)
             if color_pixels(img, btn, CHEST_BTN_COLOR) >= CHEST_YELLOW_MIN:
                 out.append('o' if color_pixels(img, left, CHEST_BTN_COLOR) >= CHEST_OPEN_LEFT_MIN else 'a')
+            elif self._green_button_pixels(img, cx) >= 60:
+                out.append('g')   # 2026-09-08 用户定案: 绿底[开启 200💎] 立即开 = 别用钻石开
             elif color_pixels(img, btn, CHEST_WHITE) >= CHEST_UNLOCK_WHITE_MIN:
                 out.append('U' if self.badge_pixels(img, cx) >= CHEST_BADGE_MIN else 'p')
             else:
                 out.append('.')
         return ''.join(out)
+
+    @staticmethod
+    def _green_button_pixels(img, cx):
+        """绿色[立即开箱]按钮像素数. 实测 2026-09-08 槽 2 (cx=220): 按钮框内 R<200 G>150 B<150 G>R+30 数 >=60."""
+        import numpy as np
+        y0, y1 = CHEST_BTN_BAND
+        region = np.asarray(img.convert('RGB').crop((cx - CHEST_BTN_HALF, y0, cx + CHEST_BTN_HALF, y1)), dtype=int)
+        if region.ndim != 3 or region.size == 0:
+            return 0
+        r, g, b = region[..., 0], region[..., 1], region[..., 2]
+        return int(((r < 200) & (g > 150) & (b < 150) & (g > r + 30)).sum())
 
     def _ready_chests(self, img, st=None):
         """可点的宝箱槽位(左->右): 只有 o=[开启] 和 U=[点击解锁]带红角标 才是免费动作。
