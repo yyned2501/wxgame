@@ -58,3 +58,8 @@ class Color:
     def rgb_to_tuple(self, rgb_int):
         """24-bit RGB int -> (r, g, b) tuple."""
         return _cp.rgb2c(rgb_int)
+
+
+# 模块级别名 (兼容 pages/base.py 老 import)
+color_pixels = _cp.color_count
+color_button = _cp.color_bbox
