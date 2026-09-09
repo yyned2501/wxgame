@@ -41,6 +41,8 @@ def reset_battle_clicks():
     BATTLE_CLICKS[0] = 0
     _LAST_SKILL_MILESTONE[0] = 0
 SKILL_DRAG_STEPS = 10                  # 拖动步数
+# 2026-09-08 用户给 0/2 截图定案: 扫徽章区找白像素 bbox, 中心 10x10 密度判 0/非0
+SKILL_BADGE_BOX = (500, 870, 545, 910)  # 徽章扫描区域 (x0, y0, x1, y1)
 # 「本帧一个可点格子都没有」这条日志的最小间隔: 同一局每隔 3s 就会扫到一次, 不节流会刷屏
 EMPTY_NOTE_EVERY = 20.0
 # 上一条「无可点」日志的时刻(模块级 = 页面实例怎么建都不影响节流)
@@ -187,27 +189,48 @@ class BattlePage(Page):
                      tier_census([], ctx.clicked_cells, red), tail)
 
     def _skill_ready(self, ctx):
-        """用 ctx.clicked_cells 长度(被点过且未解禁的格子key)作为成功开格数(2026-09-08 用户定案).
-        每场战斗最多 3 次 (8/20/50), _LAST_SKILL_MILESTONE 防重.
+        """徽章中心白像素密度判 "0" (>=30% 填充) vs 非 0 (<30% 空). 2026-09-08 用户截图定案.
+        徽章区 SKILL_BADGE_BOX (500, 870, 545, 910) 含徽章+反光噪声, 用 bbox 中心 10x10 判.
         """
-        success = len(ctx.clicked_cells)
-        next_milestone = None
-        for m in SKILL_MILESTONES:
-            if success >= m and _LAST_SKILL_MILESTONE[0] < m:
-                next_milestone = m
-                break
-        if next_milestone is None:
-            return False, success
-        return True, success
+        import numpy as np
+        arr = np.asarray(ctx.f.img)
+        x0, y0, x1, y1 = SKILL_BADGE_BOX
+        region = arr[y0:y1, x0:x1]
+        # 白色像素 (RGB > 200) 且非橙色徽章底
+        r, g, b = region[..., 0], region[..., 1], region[..., 2]
+        white = (r > 200) & (g > 200) & (b > 200)
+        # 找白像素 bbox
+        ys, xs = np.where(white)
+        if len(ys) < 10:                 # 太少 = 徽章不存在 / 不可见
+            return False, 0
+        bx0, bx1 = int(xs.min()), int(xs.max()) + 1
+        by0, by1 = int(ys.min()), int(ys.max()) + 1
+        # bbox 中心 10x10 区白像素密度
+        cx = (bx0 + bx1) // 2
+        cy = (by0 + by1) // 2
+        half = 5
+        local = white[max(0, cy - half):cy + half, max(0, cx - half):cx + half]
+        if local.size == 0:
+            return False, 0
+        density = float(local.sum()) / float(local.size)
+        # "0" 实心填充密度 >= 30%; "1"/"2"/"3" 笔画中间空 密度 < 30%
+        if density >= 0.30:
+            return False, int(local.sum())              # "0" = skip
+        return True, int(local.sum())
 
     def _cast_skill(self, ctx):
         """成功开格数达 8/20/50 时释放技能(2026-09-08 用户定案). 按计数判据自然节流, 每场最多 3 次."""
         ready, success = self._skill_ready(ctx)
         if not ready:
             return False
-        # 找下一个未触发的里程碑
-        next_m = next(m for m in SKILL_MILESTONES
-                      if success >= m and _LAST_SKILL_MILESTONE[0] < m)
+        # 找下一个未触发的里程碑(改 for 循环, 避免 next() 抛 StopIteration)
+        next_m = None
+        for m in SKILL_MILESTONES:
+            if success >= m and _LAST_SKILL_MILESTONE[0] < m:
+                next_m = m
+                break
+        if next_m is None:
+            return False   # 本场已放完 3 次
         x1, y1 = SKILL_ICON
         x2, y2 = SKILL_TARGET
         ctx.drag(x1, y1, x2, y2, steps=SKILL_DRAG_STEPS, hold_each=0.02)
@@ -223,10 +246,11 @@ class BattlePage(Page):
         if (not ctx.print_confirmed and not ctx.f.has('时间', '时间剩余')
                 and sum(1 for c in cells if c['icon']) < 2):
             return False
-        # 技能释放 暂停 (<< 2026-09-08 用户定案“先关掉”)
-        # 5 轮徽章数字识别都失败, 格子数 8/20/50 不等于技能能量槽, 拖动无效现象严重
-        # 代码保留在 _skill_ready/_cast_skill, 不调用. 重启时只要去掉这块注释即可.
-        # self._cast_skill(ctx)
+        # 技能释放(2026-09-08 用户定案 v2): 徽章密度判 "0" 跳过; + 8/20/50 里程碑限制每场次数
+        # 1) 密度 >= 30% = "0" = skip (徽章显示 0/不可用)
+        # 2) 密度 < 30% + 累计开格 >= 8/20/50 = 释放 (1/2/3 数字都 OK)
+        # 2026-09-08 早期 5 轮徽章数字识别失败(白像素/橙/OCR/格子数), 用户给了 0/2 截图后定案
+        self._cast_skill(ctx)
         # cls=3 = 认不出价钱的三位数块(实测是左下角"镜头复位"按钮的中文), 绝不点
         clickable = [c for c in cells if c['white'] and c['cls'] != 3]
         now = time.time()

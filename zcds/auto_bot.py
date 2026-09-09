@@ -550,13 +550,21 @@ class App:
         return time.time() < self.blocked.get(key, 0.0)
 
     def ensure_window(self):
-        if self.hwnd is None or not g.u32.IsWindow(self.hwnd):
+        # 2026-09-08 真机长测: hwnd churn (游戏窗口重开句柄变) 会导致找不到窗口死循环抛 RuntimeError.
+        # 加 5次 × 2s = 10s 重试给窗口恢复时间, 减少不必要的 bot 中断.
+        for attempt in range(5):
+            if self.hwnd and g.u32.IsWindow(self.hwnd):
+                return
             self.hwnd = g.find_game_window()
-            if self.hwnd is None:
-                raise RuntimeError('找不到游戏窗口, 请先打开 占城大师')
-            self.vision = Vision(self.hwnd)   # 新引擎首轮必然 OCR, 不必再置标记
-            self._win_warn = 0
-            self._screen_selftest()
+            if self.hwnd is not None:
+                self.vision = Vision(self.hwnd)
+                self._win_warn = 0
+                self._screen_selftest()
+                return
+            if attempt < 4:
+                logging.info(f'[窗口] 找不到, {2}s 后重试 (第 {attempt+1}/5 次)')
+                time.sleep(2)
+        raise RuntimeError('找不到游戏窗口, 请先打开 占城大师')
 
     def _screen_selftest(self):
         """屏幕通道自检(capture_screen 和 PrintWindow 是两条独立的路, 一条废了另一条不一定废)
