@@ -28,7 +28,7 @@ from datetime import datetime
 import game_utils as g
 from colorprint import REF_SIZE
 from config import AD_FOCUS, PAGE_CFG
-from vision import Vision, ScreenFeature
+from libs.vision import Vision, ScreenFeature  # 2026-09-09 Task 5: 走 libs 入口
 from pages import ALL_PAGES
 from pages.base import (AD_PILL_LEFT_TOL, AD_PILL_LOW_HOLD, AD_PILL_SHRINK, AD_PILL_SHRINK_PCT,
                         AD_BLACK_MAX_FRAC, CHEST_BLOCK_ALL, NAV_LOBBY_TAB,
@@ -118,7 +118,12 @@ class App:
         self.hwnd = None
         self.vision = None
         self.pages = ALL_PAGES
-        # 页面执行上下文
+        # ---- 依赖注入 (2026-09-09 重构 Task 5) ----
+        # 新代码可通过 self.window.click() / self.color.pixels() 调用, 旧代码继续走 App.click/click_window.
+        from libs import Window, Color, Vision
+        self.window = Window()        # 窗口/截图/click/drag (封装 game_utils)
+        self.color = Color()          # 点色指纹 (封装 colorprint)
+        self.vision = None            # 在 ensure_window 之后实例化 (需要 hwnd)
         self.f = None                    # 当前 ScreenFeature
         self.battles = 0
         self.clicked_cells = {}        # key -> 点击时刻(battle 页按 CELL_RETRY 过期解禁)
