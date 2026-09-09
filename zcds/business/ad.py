@@ -63,6 +63,7 @@ AD_CLAIM_DEGREE = 90
 AD_CLAIM_MIN_PX = 2200
 AD_CLAIM_W = (108, 145)
 AD_CLAIM_H = (26, 50)
+AD_CLAIM_ROW_MIN = 20   # 量外接框前先砍掉"整行黄像素 < 20"的噪点行(按钮每行 >=72, 噪点每行 1)
 
 
 def ad_claim_pos(img):
@@ -75,7 +76,15 @@ def ad_claim_pos(img):
     m = color_mask(img, AD_CLAIM_BOX, AD_CLAIM_COLOR, AD_CLAIM_DEGREE)
     if int(m.sum()) < AD_CLAIM_MIN_PX:
         return None
-    ys, xs = np.nonzero(m)
+    # 外接框对噪点零抵抗 —— 真机 2026-09-09 14:46 dbg_000_result: (357,705) 一个孤立黄像素
+    # 把框从 145x42 撑到 150x139, 撞破 AD_CLAIM_H 上限 -> 尺寸闸门误拒真按钮, 整次广告领取
+    # 被跳过(那帧像素数 4212, 本身远超 AD_CLAIM_MIN_PX)。所以先按行滤掉噪点再量框。
+    # 只滤行不滤列: 药丸内部被"领取"白字挖出 4~6px 的稀疏列, 按列滤会啃掉按钮本体。
+    keep = m.sum(axis=1) >= AD_CLAIM_ROW_MIN
+    if not keep.any():
+        return None
+    ys, xs = np.nonzero(m[keep])
+    ys = np.nonzero(keep)[0][ys]          # 滤行压缩过行号, 映射回框内坐标
     bw, bh = int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
     if not (AD_CLAIM_W[0] <= bw <= AD_CLAIM_W[1] and AD_CLAIM_H[0] <= bh <= AD_CLAIM_H[1]):
         return None
@@ -151,7 +160,7 @@ __all__ = [
     'AD_BODY_Y0', 'AD_BODY_MEAN_MAX', 'AD_BODY_WHITE_MAX',
     'AD_CLOSE_BAND', 'AD_CLOSE_X0', 'AD_CLOSE_WHITE_MIN', 'AD_CLOSE_BOX',
     'AD_CLAIM_BOX', 'AD_CLAIM_COLOR', 'AD_CLAIM_DEGREE',
-    'AD_CLAIM_MIN_PX', 'AD_CLAIM_W', 'AD_CLAIM_H',
+    'AD_CLAIM_MIN_PX', 'AD_CLAIM_W', 'AD_CLAIM_H', 'AD_CLAIM_ROW_MIN',
     'AD_PILL_BAND', 'AD_PILL_MIN_COLS', 'AD_PILL_SHRINK',
     'AD_PILL_SHRINK_PCT', 'AD_PILL_LOW_HOLD', 'AD_PILL_LEFT_TOL',
     'AD_BLACK_MAX_FRAC', 'AD_DIVERGE_FRAC', 'AD_DIVERGE_PIX',

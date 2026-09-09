@@ -60,15 +60,20 @@ class Color:
         return _cp.rgb2c(rgb_int)
 
 
-# 模块级别名 (兼容 pages/base.py 老 import)
-def color_button(img, box, target_rgb, min_px=1, degree=90):
-    """框内找一块足够大的目标色色块 -> (x, y) 点击点; 没找到返回 None.
+# 模块级函数 (兼容 pages/base.py 老 import)
+# 不能裸别名到 colorprint 原语: color_bbox(img, box, color, degree, min_px) 的第 4 个位置参数
+# 是 degree, 而调用点一律写 color_button(img, box, color, min_px)。min_px 动辄几百, 落到
+# degree 位上会让 tolerance() 返回负数 -> 掩码恒空 -> 每个点色动作都判成 None(整页零动作卡死);
+# 且 color_bbox 回传 (x, y, n) 三元组, ctx.click(x, y) 只收两个。故这里必须保留适配层。
+BTN_DEGREE = 90   # 动作层容差(每通道 +-13), 比指纹的 85 更紧: 要把"有按钮"和"按钮上的白字"分开
 
-    这是 Color.button() 的模块级别名, 返回 2 元组 (与 Color.button 一致),
-    避免调用方 cx, cy = btn 在色块命中时被 3 元组炸掉.
-    """
-    r = _cp.color_bbox(img, box, target_rgb, degree, min_px)
+
+def color_pixels(img, box, color, degree=BTN_DEGREE):
+    """box 内某色像素个数(0 = 该色块不在这里)"""
+    return _cp.color_count(img, box, color, degree)
+
+
+def color_button(img, box, color, min_px=1, degree=BTN_DEGREE):
+    """box 内找一块足够大的目标色色块 -> (x, y) 点击点; 没找到返回 None"""
+    r = _cp.color_bbox(img, box, color, degree, min_px)
     return None if r is None else (r[0], r[1])
-
-
-color_pixels = _cp.color_count
