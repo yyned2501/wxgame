@@ -34,7 +34,7 @@ AD_FOCUS = True
 
 PAGE_CFG = {
     'lobby':        dict(roi=(0.0, 0.55, 1.0, 0.90), scale=0.6, poll=3.0, ocr_gap=10.0),
-    'battle':       dict(roi=(0.0, 0.46, 1.0, 0.90), scale=0.5, poll=3.0, ocr_gap=600.0),
+    'battle':       dict(roi=(0.0, 0.46, 1.0, 0.90), scale=0.5, poll=1.0, ocr_gap=600.0),
     'matching':     dict(roi=(0.0, 0.15, 1.0, 0.90), scale=0.5, poll=4.0, ocr_gap=8.0),
     'result':       dict(roi=None, scale=0.5, poll=3.0, ocr_gap=6.0),
     'chest_info':   dict(roi=(0.0, 0.10, 1.0, 0.90), scale=0.5, poll=3.0, ocr_gap=6.0),

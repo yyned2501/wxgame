@@ -28,7 +28,7 @@ from datetime import datetime
 import game_utils as g
 from colorprint import REF_SIZE
 from config import AD_FOCUS, PAGE_CFG
-from vision import Vision, ScreenFeature
+from libs.vision import Vision, ScreenFeature  # 2026-09-09 Task 5: 走 libs 入口
 from pages import ALL_PAGES
 from pages.base import (AD_PILL_LEFT_TOL, AD_PILL_LOW_HOLD, AD_PILL_SHRINK, AD_PILL_SHRINK_PCT,
                         AD_BLACK_MAX_FRAC, CHEST_BLOCK_ALL, NAV_LOBBY_TAB,
@@ -118,7 +118,12 @@ class App:
         self.hwnd = None
         self.vision = None
         self.pages = ALL_PAGES
-        # 页面执行上下文
+        # ---- 依赖注入 (2026-09-09 重构 Task 5) ----
+        # 新代码可通过 self.window.click() / self.color.pixels() 调用, 旧代码继续走 App.click/click_window.
+        from libs import Window, Color, Vision
+        self.window = Window()        # 窗口/截图/click/drag (封装 game_utils)
+        self.color = Color()          # 点色指纹 (封装 colorprint)
+        self.vision = None            # 在 ensure_window 之后实例化 (需要 hwnd)
         self.f = None                    # 当前 ScreenFeature
         self.battles = 0
         self.clicked_cells = {}        # key -> 点击时刻(battle 页按 CELL_RETRY 过期解禁)
@@ -206,6 +211,44 @@ class App:
         u32.SendMessageW(h, 0x0201, 0x0001, lp)
         time.sleep(0.06)
         u32.SendMessageW(h, 0x0202, 0, lp)
+
+    def drag(self, x1, y1, x2, y2, steps=10, hold_each=0.02):
+        """拖动 (x1,y1) -> (x2,y2). SendMessageW 路径, 不抢前台.
+        2026-09-07 加: 给战页面自动释放技能用, 物理拖动, steps 步匀速移动.
+        2026-09-08: 末尾多发 2 次 UP 兜底(0,0 坐标强制释放), 防 SendMessageW UP 没生效导致鼠标卡住.
+        """
+        self._clicks.append((self.cur_page or '?', ('drag', int(x1), int(y1), int(x2), int(y2))))
+        if self.dry_run:
+            logging.info(f'[dry] 拖动 ({x1},{y1}) -> ({x2},{y2})')
+            return
+        import ctypes, ctypes.wintypes as wt
+        u32 = ctypes.windll.user32
+        h = self._widget()
+        if not h:
+            logging.error('找不到渲染窗口')
+            return
+        wr = wt.RECT(); u32.GetWindowRect(h, ctypes.byref(wr))
+        gr = wt.RECT(); u32.GetWindowRect(self.hwnd, ctypes.byref(gr))
+        def to_widget(x, y):
+            px = int(x) - (gr.left - wr.left)
+            py = int(y) - (gr.top - wr.top)
+            return (py << 16) | (px & 0xFFFF)
+        lp1 = to_widget(x1, y1)
+        lp2 = to_widget(x2, y2)
+        u32.SendMessageW(h, 0x0200, 0, lp1)
+        u32.SendMessageW(h, 0x0201, 0x0001, lp1)
+        time.sleep(0.05)
+        for i in range(1, steps + 1):
+            t = i / steps
+            mx = x1 + (x2 - x1) * t
+            my = y1 + (y2 - y1) * t
+            u32.SendMessageW(h, 0x0200, 0x0001, to_widget(mx, my))   # MOVE with MK_LBUTTON
+            time.sleep(hold_each)
+        u32.SendMessageW(h, 0x0202, 0, lp2)
+        # 2026-09-08 兜底: 再发 2 次 UP(原坐标 + 0,0 强制), 防止 SendMessageW UP 没生效
+        u32.SendMessageW(h, 0x0202, 0, lp2)
+        u32.SendMessageW(h, 0x0200, 0, 0)         # MOVE to (0,0)
+        u32.SendMessageW(h, 0x0202, 0, 0)         # UP at (0,0)
 
     def _widget(self):
         import ctypes, ctypes.wintypes as wt
@@ -512,13 +555,21 @@ class App:
         return time.time() < self.blocked.get(key, 0.0)
 
     def ensure_window(self):
-        if self.hwnd is None or not g.u32.IsWindow(self.hwnd):
+        # 2026-09-08 真机长测: hwnd churn (游戏窗口重开句柄变) 会导致找不到窗口死循环抛 RuntimeError.
+        # 加 5次 × 2s = 10s 重试给窗口恢复时间, 减少不必要的 bot 中断.
+        for attempt in range(5):
+            if self.hwnd and g.u32.IsWindow(self.hwnd):
+                return
             self.hwnd = g.find_game_window()
-            if self.hwnd is None:
-                raise RuntimeError('找不到游戏窗口, 请先打开 占城大师')
-            self.vision = Vision(self.hwnd)   # 新引擎首轮必然 OCR, 不必再置标记
-            self._win_warn = 0
-            self._screen_selftest()
+            if self.hwnd is not None:
+                self.vision = Vision(self.hwnd)
+                self._win_warn = 0
+                self._screen_selftest()
+                return
+            if attempt < 4:
+                logging.info(f'[窗口] 找不到, {2}s 后重试 (第 {attempt+1}/5 次)')
+                time.sleep(2)
+        raise RuntimeError('找不到游戏窗口, 请先打开 占城大师')
 
     def _screen_selftest(self):
         """屏幕通道自检(capture_screen 和 PrintWindow 是两条独立的路, 一条废了另一条不一定废)
@@ -983,6 +1034,9 @@ class App:
                 # 「连续零价签」报警的记账只许在同一场内累加(真机 R42 跨场累积误报, 见 battle.py)
                 from pages.battle import reset_blind_streak
                 reset_blind_streak()
+                # 技能按点格子累计次数释放(8/20/50), 进新战斗必须清零(2026-09-08)
+                from pages.battle import reset_battle_clicks
+                reset_battle_clicks()
         # 点色定完页、该读的字已经备好 -> 同一轮就能出手。
         # 旧版进页第一轮只补特征不动作(_skip_act), 每换一页白扔一轮, 已删除。
         acted = page.act(self)

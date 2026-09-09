@@ -18,7 +18,7 @@ r"""价格护栏回归: chest_info 只准点"免费"那颗黄按钮, 判付费�
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import numpy as np

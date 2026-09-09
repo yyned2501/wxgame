@@ -17,6 +17,32 @@ from .base import Page
 TOWER = (276, 800)
 # 两次点格子的最小间隔. battle 页 poll=3.0s(config.py), 旧的 5s 等于每两轮才出手一次
 CELL_COOLDOWN = 2.5
+# 单帧最多点几格. 2026-09-07 真机: per-cell 冷却下 20 格白棋盘仍 1.1s/格, 钱溢出;
+# 改 2 后理论每步 2 格, 20 格一圈 11s。改 3/4 需真机验证游戏是否接受瞬时多点。
+CELLS_PER_STEP = 2
+# 技能自动释放(2026-09-07 用户定案): 左下角技能图标亮起 -> 拖到屏幕中间释放。
+SKILL_ICON = (493, 937)                # 技能图标中心(右下角按钮, 实测 2026-09-08)
+SKILL_TARGET = (276, 500)              # 释放目标(屏幕中央, 窗口 552x1006)
+SKILL_BRIGHT_THRESHOLD = 145           # 旧版灰度阈值, 弃用
+SKILL_BRIGHT_POINTS = [(35, 720), (45, 720), (55, 720), (45, 730)]  # 旧版 4 点, 弃用
+# 2026-09-08 用户定案: 技能图标在右下角, 右上角有数字时可释放. 多次修正位置/颜色:
+#   - 第一版: 红像素 (R>200 G<80 B<80) → 实际是血条/伤害数字, 不是徽章
+#   - 第二版: 橙色 (R>200 G 100-200 B<80) → 位置错 (扫 (405,879) 不是徽章)
+#   - 最终: 宽白像素 (R>180 G>180 B>180) >= 50, 区域 (500..545, 870..910)
+#   实测: A("1")=72 / B("1")=71 / C("0")=22, 阈值 50 留安全余量
+# 技能释放按点格子累计次数(2026-09-08 用户定案: 开了 8/20/50 个格子后释放).
+SKILL_MILESTONES = (8, 20, 50)         # 三次释放时机: 累计点格子达 8/20/50 时各放一次
+BATTLE_CLICKS = [0]                    # 本场战斗累计点格子数(模块级, _BLIND_STREAK 同款)
+_LAST_SKILL_MILESTONE = [0]            # 已触发的最大里程碑(防重复触发)
+
+
+def reset_battle_clicks():
+    """进战斗页时清零(由 auto_bot 调用). 同步清技能释放计数."""
+    BATTLE_CLICKS[0] = 0
+    _LAST_SKILL_MILESTONE[0] = 0
+SKILL_DRAG_STEPS = 10                  # 拖动步数
+# 2026-09-08 用户给 0/2 截图定案: 扫徽章区找白像素 bbox, 中心 10x10 密度判 0/非0
+SKILL_BADGE_BOX = (500, 870, 545, 910)  # 徽章扫描区域 (x0, y0, x1, y1)
 # 「本帧一个可点格子都没有」这条日志的最小间隔: 同一局每隔 3s 就会扫到一次, 不节流会刷屏
 EMPTY_NOTE_EVERY = 20.0
 # 上一条「无可点」日志的时刻(模块级 = 页面实例怎么建都不影响节流)
@@ -162,6 +188,57 @@ class BattlePage(Page):
         logging.info('[战斗] 无可点 | %s -> %s',
                      tier_census([], ctx.clicked_cells, red), tail)
 
+    def _skill_ready(self, ctx):
+        """徽章中心白像素密度判 "0" (>=30% 填充) vs 非 0 (<30% 空). 2026-09-08 用户截图定案.
+        徽章区 SKILL_BADGE_BOX (500, 870, 545, 910) 含徽章+反光噪声, 用 bbox 中心 10x10 判.
+        """
+        import numpy as np
+        arr = np.asarray(ctx.f.img)
+        x0, y0, x1, y1 = SKILL_BADGE_BOX
+        region = arr[y0:y1, x0:x1]
+        # 白色像素 (RGB > 200) 且非橙色徽章底
+        r, g, b = region[..., 0], region[..., 1], region[..., 2]
+        white = (r > 200) & (g > 200) & (b > 200)
+        # 找白像素 bbox
+        ys, xs = np.where(white)
+        if len(ys) < 10:                 # 太少 = 徽章不存在 / 不可见
+            return False, 0
+        bx0, bx1 = int(xs.min()), int(xs.max()) + 1
+        by0, by1 = int(ys.min()), int(ys.max()) + 1
+        # bbox 中心 10x10 区白像素密度
+        cx = (bx0 + bx1) // 2
+        cy = (by0 + by1) // 2
+        half = 5
+        local = white[max(0, cy - half):cy + half, max(0, cx - half):cx + half]
+        if local.size == 0:
+            return False, 0
+        density = float(local.sum()) / float(local.size)
+        # "0" 实心填充密度 >= 30%; "1"/"2"/"3" 笔画中间空 密度 < 30%
+        if density >= 0.30:
+            return False, int(local.sum())              # "0" = skip
+        return True, int(local.sum())
+
+    def _cast_skill(self, ctx):
+        """成功开格数达 8/20/50 时释放技能(2026-09-08 用户定案). 按计数判据自然节流, 每场最多 3 次."""
+        ready, success = self._skill_ready(ctx)
+        if not ready:
+            return False
+        # 找下一个未触发的里程碑(改 for 循环, 避免 next() 抛 StopIteration)
+        next_m = None
+        for m in SKILL_MILESTONES:
+            if success >= m and _LAST_SKILL_MILESTONE[0] < m:
+                next_m = m
+                break
+        if next_m is None:
+            return False   # 本场已放完 3 次
+        x1, y1 = SKILL_ICON
+        x2, y2 = SKILL_TARGET
+        ctx.drag(x1, y1, x2, y2, steps=SKILL_DRAG_STEPS, hold_each=0.02)
+        _LAST_SKILL_MILESTONE[0] = next_m
+        logging.info('[技能] 释放! 成功开格数=%d 触发里程碑=%d, 拖 (%d,%d)->(%d,%d) 步数=%d',
+                     success, next_m, x1, y1, x2, y2, SKILL_DRAG_STEPS)
+        return True
+
     def act(self, ctx):
         cells = scan_battle_cells(ctx.f.img)
         # 防护: 点色指纹已全中 = 确认在战斗页, 直接放行(不为此跑 OCR, 省 ~315ms);
@@ -169,6 +246,11 @@ class BattlePage(Page):
         if (not ctx.print_confirmed and not ctx.f.has('时间', '时间剩余')
                 and sum(1 for c in cells if c['icon']) < 2):
             return False
+        # 技能释放(2026-09-08 用户定案 v2): 徽章密度判 "0" 跳过; + 8/20/50 里程碑限制每场次数
+        # 1) 密度 >= 30% = "0" = skip (徽章显示 0/不可用)
+        # 2) 密度 < 30% + 累计开格 >= 8/20/50 = 释放 (1/2/3 数字都 OK)
+        # 2026-09-08 早期 5 轮徽章数字识别失败(白像素/橙/OCR/格子数), 用户给了 0/2 截图后定案
+        self._cast_skill(ctx)
         # cls=3 = 认不出价钱的三位数块(实测是左下角"镜头复位"按钮的中文), 绝不点
         clickable = [c for c in cells if c['white'] and c['cls'] != 3]
         now = time.time()
@@ -176,8 +258,10 @@ class BattlePage(Page):
             self._note_no_cell(ctx, cells, now)
             return False
         _BLIND_STREAK[0] = 0   # 这帧扫到了可点格子 = 眼睛没问题
-        if now - ctx.last_cell < CELL_COOLDOWN:
-            return False
+        # 注: 旧版这里有 `if now - ctx.last_cell < CELL_COOLDOWN: return False` 的全局 2.5s 冷却,
+        # 导致 20 格白棋盘也 2.5s 才出 1 手, 钱溢出。真机 2026-09-07 验证: 删掉之后 per-cell 由
+        # `clicked_cells` 字典 + 下面 `if key in ctx.clicked_cells: continue` 自然处理 (25s 解禁),
+        # 不同格可以连点, 同一格要等 25s 才能回头重试 —— 比全局冷却还更安全。
         # clicked_cells 是 {格子key: 点击时刻}: 先清掉过期条目, 再按档位找能点的格子
         expired = [k for k, t in ctx.clicked_cells.items() if now - t > CELL_RETRY]
         for k in expired:
@@ -185,26 +269,42 @@ class BattlePage(Page):
         clickable.sort(key=rank_cell)
         # 必须逐个往后找. 旧版只看第一名, 第一名点过一次就整轮 return False ->
         # 真机 12:11:07~12:12:42 连续 95s 一次手都没出, 而当时棋盘上还有 14 个白色格子
+        # 2026-09-07 改造: 单帧收集 CELLS_PER_STEP 格后再统一 click + log, 让一帧多吃几格消化钱
         skipped = 0
+        to_click = []   # [(cx, cy, key, cell), ...] 按档位排序, 最多 CELLS_PER_STEP 个
         for c in clickable:
             cx, cy = c['x'] + c['w'] // 2, c['y'] + c['h'] // 2
             key = cell_key(c)
             if key in ctx.clicked_cells:
                 skipped += 1
                 continue
-            # 盘点要在写冷却表**之前**算, 这样「可点」里含本帧要点的那一格
-            census = tier_census(clickable, ctx.clicked_cells,
-                                 sum(1 for c in cells if c['cls'] == 'red'))
+            to_click.append((cx, cy, key, c))
+            if len(to_click) >= CELLS_PER_STEP:
+                break
+        if not to_click:
+            logging.debug('[战斗] 全部白色格子都在冷却中')
+            return False
+        # 盘点要在写冷却表**之前**算, 这样「可点」里含本帧要点的所有格
+        census = tier_census(clickable, ctx.clicked_cells,
+                             sum(1 for c in cells if c['cls'] == 'red'))
+        extra = ''
+        if skipped:
+            extra += ' 跳过已点%d格' % skipped
+        if expired:
+            extra += ' 解禁%d格' % len(expired)
+        # 写冷却表 + 一次性多点 + 逐行 log (census 只在最后一行, 避免刷屏)
+        # 真机 2026-09-07: 两次 click 间没停顿, 游戏触摸层把 cursor A→B+立即 DOWN 识别成 swipe/drag。
+        # 加 150ms 间隙让 UP 后有明显停顿 (>cursor move 的 5ms), 触摸事件独立。460ms 仍远 < poll=1.0s。
+        for i, (cx, cy, key, c) in enumerate(to_click):
             ctx.clicked_cells[key] = now
-            ctx.last_cell = now
-            extra = ''
-            if skipped:
-                extra += ' 跳过已点%d格' % skipped
-            if expired:
-                extra += ' 解禁%d格' % len(expired)
-            logging.info(f'[战斗] 点格子 ({cx},{cy}) {c["icon"]} cls={c["cls"]} '
-                         f'clip={c["clip"]}{extra} | {census}')
             ctx.click(cx, cy)
-            return True
-        logging.debug('[战斗] 全部白色格子都在冷却中')
-        return False
+            BATTLE_CLICKS[0] += 1                   # 累计本场点格子数(给技能释放判据用)
+            if i < len(to_click) - 1:
+                time.sleep(0.15)
+            tail = census if i == len(to_click) - 1 else ''
+            tag = f'连点{i+1}/{len(to_click)}' if len(to_click) > 1 else '点格子'
+            logging.info(f'[战斗] {tag} ({cx},{cy}) {c["icon"]} cls={c["cls"]} '
+                         f'clip={c["clip"]}{extra} | {tail}')
+        return True
+
+
