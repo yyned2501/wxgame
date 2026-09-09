@@ -71,17 +71,22 @@ zcds/
 - `libs/` **绝不** import `pages` 或 `auto_bot`
 - 唯一反向入口：`App` 主动调用 `Page.act(ctx)`，`tools/*` 通过独立 CLI 调用
 
-## 3. libs/ 模块职责
+## 3. libs/ 模块职责 (2026-09-09 修正: libs 只放通用工具, 不掺业务)
 
-| 模块 | 旧位置 | 职责 |
+**铁律**: libs/ **绝不操作业务**. 业务函数 (广告/弹窗/引导/导航/转场) 留在 `pages/base.py` 或独立业务模块.
+
+| 模块 | 旧位置 | 职责 (无业务) |
 |---|---|---|
-| `libs/window.py` | `game_utils.py` | hwnd 查找/截图/click/drag/widget 子窗口查找。**类封装**取代 `g.u32.PostMessageW` |
-| `libs/color.py` | `colorprint.py` | 点色指纹 (REF_SIZE/print_score/tolerance/REF_COLOR)、color_pixels、color_button。**类封装** |
-| `libs/vision.py` | `vision.py` | OCR（rapidocr 封装）、ScreenFeature 数据结构 |
-| `libs/routing.py` | `pages/base.py` | route_prints、is_soft、print_score、print_match |
-| `libs/config.py` | `config.py` | PAGE_CFG（每页 ROI/poll/ocr_gap）、WATCH_ADS、AD_FOCUS |
+| `libs/window.py` | `game_utils.py` | hwnd 查找/截图/click/drag/widget 子窗口查找. **类封装**取代 `g.u32.PostMessageW` |
+| `libs/color.py` | `colorprint.py` | 点色指纹 (REF_SIZE/print_score/tolerance/is_color). **类封装** |
+| `libs/vision.py` | `vision.py` | OCR (rapidocr 封装)、ScreenFeature 数据结构 |
+| `libs/routing.py` | `pages/base.py` | 路由: route_prints/is_soft/match_print/detect_ocr/route/select_page (无游戏知识, 纯框架) |
+| `libs/config.py` | `config.py` | PAGE_CFG (每页 ROI/poll/ocr_gap)、WATCH_ADS、AD_FOCUS |
 
-**所有 libs 模块都用类封装**，不允许出现"全局函数模块"（如旧 `game_utils`）。
+**被删除** (2026-09-09 用户反馈"libs 不应操作业务"):
+- ~~`libs/ad.py`~~ -> 业务, 放 pages/base.py (`ad_close_pos`/`ad_claim_pos`/`ad_pill_state` 等)
+- ~~`libs/modal.py`~~ -> 业务, 放 pages/base.py (`find_close_badge`/`guide_modal`/`is_transition` 等)
+- ~~`libs/navigation.py`~~ -> 业务, 放 pages/base.py (`nav_present`/`nav_tab_cx` 等)
 
 ```python
 # ❌ 旧：全局函数模块
