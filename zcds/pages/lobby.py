@@ -247,7 +247,7 @@ class LobbyPage(Page):
                 ctx.click(sx, sy)
                 return True
         # 2) 玩家对战: 认那块金色按钮的外接框中心(旧版要 OCR 读[玩家对战], 读不到就永远不点)
-        pos = color_button(img, PVP_BOX, PVP_COLOR, PVP_MIN_PX)
+        pos = color_button(img, PVP_BOX, PVP_COLOR, min_px=PVP_MIN_PX)
         if pos is not None and not ctx.acted('pvp_click'):
             logging.info(f'[主页] 点色命中玩家对战 {pos}')
             ctx.click(*pos)

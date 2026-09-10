@@ -78,7 +78,14 @@ def get_rect(hwnd):
     return r.left, r.top, r.right, r.bottom
 
 def capture_window(hwnd, flag=2):
-    """打印窗口内容, 返回 PIL RGB 图像"""
+    """打印窗口内容, 返回 PIL RGB 图像
+
+    自检(2026-09-10): PrintWindow(PW_RENDERFULLCONTENT) 在某些场景下(游戏窗口被反复点
+    击后变非前台 / 某些 Win10/11 上对 chromium 内核的非前台窗口)会抓不到 webview 内容,
+    只返回窗口 chrome 残影. 实测正常帧均值 ~93, 失灵帧均值 ~5, 屏幕通道同期帧均值 ~98.
+    现在: PrintWindow 帧均值 < 100 时, 抓一张 capture_screen 对比; 均值差 > 10 -> 失灵,
+    fallback 到 capture_screen 通道. 绝大多数时候不增加开销(只在怀疑失灵时才跑对比).
+    """
     left, top, right, bottom = get_rect(hwnd)
     w, h = right - left, bottom - top
     hdc = u32.GetWindowDC(hwnd)
@@ -99,8 +106,23 @@ def capture_window(hwnd, flag=2):
     gdi32.DeleteObject(bmp)
     gdi32.DeleteDC(memdc)
     u32.ReleaseDC(hwnd, hdc)
-    img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1)
-    return img.convert('RGB'), ok
+    img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1).convert('RGB')
+    # ---- PrintWindow 失灵自检 ----
+    try:
+        import numpy as np
+        gray = float(np.asarray(img.convert('L'), dtype=np.float32).mean())
+        if gray < 100.0:
+            sc = capture_screen(hwnd)
+            sc_gray = float(np.asarray(sc.convert('L'), dtype=np.float32).mean())
+            if abs(gray - sc_gray) > 10.0:
+                # PrintWindow 失灵, 走屏幕通道兜底
+                import logging
+                logging.warning('[抓帧] PrintWindow 失灵 (PW 均值 %.1f, 屏幕 %.1f, 差 %.1f) -> fallback capture_screen',
+                                gray, sc_gray, abs(gray - sc_gray))
+                return sc, ok
+    except Exception:
+        pass
+    return img, ok
 
 def capture_screen_rect(x, y, w, h):
     """抓**屏幕上**这块矩形里实际显示的像素(和 capture_window 的窗口自绘是两条不同通道)。

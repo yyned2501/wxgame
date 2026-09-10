@@ -74,7 +74,7 @@ class LevelUpPage(Page):
         img = getattr(ctx.f, 'img', None)
         if img is None:
             return False
-        pos = color_button(img, self.CLAIM_BOX, self.CLAIM_COLOR, self.CLAIM_MIN_PX)
+        pos = color_button(img, self.CLAIM_BOX, self.CLAIM_COLOR, min_px=self.CLAIM_MIN_PX)
         if pos is None:
             return False
         n = color_pixels(img, self.CLAIM_BOX, self.CLAIM_COLOR)

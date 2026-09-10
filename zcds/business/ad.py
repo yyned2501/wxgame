@@ -26,7 +26,10 @@ AD_BODY_WHITE_MAX = 0.03
 AD_CLOSE_BAND = (45, 118)
 AD_CLOSE_X0 = 432
 AD_CLOSE_WHITE_MIN = 10
-AD_CLOSE_BOX = ((30, 60), (30, 60))
+# 2026-09-10 实测"已获得奖励"页的关闭按钮色块是 63x20 横长方形(绿播放图标 + "关闭"白字),
+# 旧限制 30..60 x 30..60 两个维度都不通过 -> ad_close_pos 永远 None -> 看完广告点不掉.
+# 放宽到 (25, 90) x (15, 50) 涵盖现在的横长形 + 以前语料里的正方形.
+AD_CLOSE_BOX = ((25, 90), (15, 50))
 
 
 def ad_close_pos(img):

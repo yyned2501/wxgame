@@ -61,5 +61,14 @@ class Color:
 
 
 # 模块级别名 (兼容 pages/base.py 老 import)
+def color_button(img, box, target_rgb, min_px=1, degree=90):
+    """框内找一块足够大的目标色色块 -> (x, y) 点击点; 没找到返回 None.
+
+    这是 Color.button() 的模块级别名, 返回 2 元组 (与 Color.button 一致),
+    避免调用方 cx, cy = btn 在色块命中时被 3 元组炸掉.
+    """
+    r = _cp.color_bbox(img, box, target_rgb, degree, min_px)
+    return None if r is None else (r[0], r[1])
+
+
 color_pixels = _cp.color_count
-color_button = _cp.color_bbox

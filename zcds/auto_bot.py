@@ -356,6 +356,31 @@ class App:
         pos = ad_close_pos(img)
         if pos is not None:
             self._ad_seen = True
+            # 2026-09-10: ad_close_pos 命中即说明已看到右上角[关闭]药丸. 广告 SDK 有时
+            # "已获得奖励"是首帧终态(右边界 164 / 白像素 606), 而原版只信"药丸缩窄" —
+            # 首帧就是终态 shrink1 = 0; 白像素不会从 606 减少, shrink2 也不触发 ->
+            # 100s 死等撒手后回主循环又卡在黑屏帧. 兜底: 看过 AD_WATCH_MIN 秒且
+            # ad_close_pos 稳定命中(同一个坐标连看 3 帧)就直接点.
+            if (waited >= self.AD_WATCH_MIN
+                    and getattr(self, '_ad_close_streak_pos', None) == pos
+                    and getattr(self, '_ad_close_streak_n', 0) >= 3
+                    and not getattr(self, '_ad_closing', False)):
+                logging.info(f'[广告] 看了 {waited:.0f}s, 关闭按钮稳定命中 {pos} 3 帧 -> 直接点')
+                self.click(*pos)
+                self._ad_closing = True
+                self._ad_close_t = now
+                self._ad_retry_at = now + self.AD_CLOSE_RETRY
+                self._ad_close_streak_pos = None
+                self._ad_close_streak_n = 0
+                return 'acted'
+            if getattr(self, '_ad_close_streak_pos', None) == pos:
+                self._ad_close_streak_n = getattr(self, '_ad_close_streak_n', 0) + 1
+            else:
+                self._ad_close_streak_pos = pos
+                self._ad_close_streak_n = 1
+        else:
+            self._ad_close_streak_pos = None
+            self._ad_close_streak_n = 0
         self._ad_sample(img, pos, now)
         # 1) 已经点过一次[关闭]: 还赖在广告页就重补一次, 认不出广告页了就交回主循环
         if self._ad_closing:

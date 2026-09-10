@@ -49,7 +49,7 @@ class NewCardPage(Page):
 
     def act(self, ctx):
         pos = color_button(ctx.f.img, self.CONTINUE_BOX, self.CONTINUE_COLOR,
-                           self.CONTINUE_MIN_PX)
+                           min_px=self.CONTINUE_MIN_PX)
         if pos is None or ctx.acted('newcard_continue'):
             return False
         logging.info(f'[新卡] 点色命中[点击继续]白字 {pos} -> 点掉它')

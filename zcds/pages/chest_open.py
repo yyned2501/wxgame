@@ -74,7 +74,7 @@ class ChestOpenPage(Page):
     def act(self, ctx):
         img = ctx.f.img          # act_needs_ocr=False => ctx.f 只有图, 没有文字框
         # 1) 底部主按钮: 白色文字块出现即点(先领取后关闭, 中心同一点)
-        bot = color_button(img, self.BOT_BOX, self.WHITE, self.BOT_MIN_PX)
+        bot = color_button(img, self.BOT_BOX, self.WHITE, min_px=self.BOT_MIN_PX)
         if bot is not None:
             # 左上[跳过]还在 = 刚放完动画的"领取奖励"态; 它消失后底部就是"关闭"态
             tag = 'claim' if color_pixels(img, self.SKIP_BOX, self.WHITE) >= self.SKIP_MIN_PX else 'close'
@@ -84,7 +84,7 @@ class ChestOpenPage(Page):
             ctx.click(*bot)
             return True
         # 2) 动画还在放(底部按钮未出): 点左上[跳过]直接进奖励展示, 省一半等待
-        skip = color_button(img, self.SKIP_BOX, self.WHITE, self.SKIP_MIN_PX)
+        skip = color_button(img, self.SKIP_BOX, self.WHITE, min_px=self.SKIP_MIN_PX)
         if skip is not None and not ctx.acted('chest_open_skip', gap=8.0):
             logging.info(f'[开箱动画] 按钮未出, 点色跳过 {skip}')
             ctx.click(*skip)

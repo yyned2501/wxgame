@@ -73,7 +73,7 @@ class HeroLevelPage(Page):
         img = getattr(ctx.f, 'img', None)
         if img is None:
             return False
-        pos = color_button(img, self.CLOSE_BOX, self.CLOSE_RED, self.CLOSE_MIN_PX)
+        pos = color_button(img, self.CLOSE_BOX, self.CLOSE_RED, min_px=self.CLOSE_MIN_PX)
         if pos is None:
             return False
         n = color_pixels(img, self.CLOSE_BOX, self.CLOSE_RED)

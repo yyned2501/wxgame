@@ -48,7 +48,7 @@ class FpsPopupPage(Page):
 
     def act(self, ctx):
         img = getattr(ctx.f, 'img', None)
-        pos = color_button(img, BTN_BOX, YELLOW, BTN_MIN_PX) if img is not None else None
+        pos = color_button(img, BTN_BOX, YELLOW, min_px=BTN_MIN_PX) if img is not None else None
         if pos is None:
             return False
         if ctx.acted('fps_ok', gap=6.0):

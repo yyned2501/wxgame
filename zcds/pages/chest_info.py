@@ -145,7 +145,7 @@ class ChestInfoPage(Page):
             logging.warning('[开宝箱] 没有帧数据, 本轮不动作')
             return False
         # 1) 点色找中间那颗黄色开箱按钮(免费/付费都是它)
-        btn = color_button(img, self.BTN_BOX, self.BTN_YELLOW, self.BTN_MIN_PX)
+        btn = color_button(img, self.BTN_BOX, self.BTN_YELLOW, min_px=self.BTN_MIN_PX)
         if btn is None:
             return self.close_panel(ctx, img, '没看到黄色开箱按钮(广告/已开箱/别的版式)')
         cx, cy = btn

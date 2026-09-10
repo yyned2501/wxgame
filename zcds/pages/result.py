@@ -107,7 +107,7 @@ class ResultPage(Page):
                     shot(ctx.f.img, 'result')
         # 2) 继续: 亮紫按钮的外接框中心(旧版要 OCR 认"点击继续", 还常被读成"点击维续")
         pos = color_button(ctx.f.img, self.CONTINUE_BOX, self.CONTINUE_COLOR,
-                           self.CONTINUE_MIN_PX)
+                           min_px=self.CONTINUE_MIN_PX)
         if pos is None or ctx.acted('result_continue'):
             return False
         ctx.battles += 1
