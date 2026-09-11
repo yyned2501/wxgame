@@ -356,11 +356,7 @@ class App:
         pos = ad_close_pos(img)
         if pos is not None:
             self._ad_seen = True
-            # 2026-09-10: ad_close_pos 命中即说明已看到右上角[关闭]药丸. 广告 SDK 有时
-            # "已获得奖励"是首帧终态(右边界 164 / 白像素 606), 而原版只信"药丸缩窄" —
-            # 首帧就是终态 shrink1 = 0; 白像素不会从 606 减少, shrink2 也不触发 ->
-            # 100s 死等撒手后回主循环又卡在黑屏帧. 兜底: 看过 AD_WATCH_MIN 秒且
-            # ad_close_pos 稳定命中(同一个坐标连看 3 帧)就直接点.
+            # 稳定命中兜底: ad_close_pos 连续 3 帧同坐标 + 广告期 >= AD_WATCH_MIN 直接点
             if (waited >= self.AD_WATCH_MIN
                     and getattr(self, '_ad_close_streak_pos', None) == pos
                     and getattr(self, '_ad_close_streak_n', 0) >= 3
@@ -381,6 +377,33 @@ class App:
         else:
             self._ad_close_streak_pos = None
             self._ad_close_streak_n = 0
+        # OCR 主导判据(2026-09-12 用户定案): 药丸 ROI OCR 识别到 "已获得奖励" 直接点关闭.
+        # 不依赖 ad_close_pos —— 即使这一帧是转场帧 pos=None, OCR 仍能读出文字;
+        # 触发后再重算一次 ad_close_pos (广告放完时关闭按钮一定在), 找不到就用 OCR
+        # 区域附近的默认坐标 (488, 77 是微信激励视频 SDK 的常见位置). 优先级最高,
+        # 早于"12s 稳定命中"兜底.
+        if (waited >= self.AD_WATCH_MIN
+                and not getattr(self, '_ad_closing', False)
+                and now - getattr(self, '_ad_ocr_last', 0.0) >= 3.0):
+            self._ad_ocr_last = now
+            try:
+                self.vision._ensure_ocr()
+                w, h = img.size
+                crop = img.crop((0, 55, min(330, w), min(118, h)))
+                res, _ = self.vision._ocr(crop)
+                joined = ' '.join(item[1] for item in (res or []))
+                if '已获得奖励' in joined:
+                    close_pos = pos or ad_close_pos(img) or (488, 77)
+                    logging.info(f'[广告] OCR 识别到 "已获得奖励" ({waited:.0f}s) -> 点[关闭] {close_pos}')
+                    self.click(*close_pos)
+                    self._ad_closing = True
+                    self._ad_close_t = now
+                    self._ad_retry_at = now + self.AD_CLOSE_RETRY
+                    self._ad_close_streak_pos = None
+                    self._ad_close_streak_n = 0
+                    return 'acted'
+            except Exception as e:
+                logging.warning(f'[广告] OCR 判据失败: {e}')
         self._ad_sample(img, pos, now)
         # 1) 已经点过一次[关闭]: 还赖在广告页就重补一次, 认不出广告页了就交回主循环
         if self._ad_closing:
