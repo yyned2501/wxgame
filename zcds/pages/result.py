@@ -90,10 +90,20 @@ class ResultPage(Page):
 
     def act(self, ctx):
         now = time.time()
-        # 点色认黄色[领取]药丸(ad_claim_pos, 全语料 815 帧 38 中 / 0 误中)。
-        # 旧版这里是 ctx.need_text() + f.find('领取'): 一次全图 OCR, 而且"领取"两个字
-        # 在别的弹窗上也有(钻石礼包), 靠 '钻石' not in joined 打补丁。现在整条零 OCR。
-        banner = ad_claim_pos(ctx.f.img) if WATCH_ADS else None
+        img = ctx.f.img
+        # 2026-09-11 用户反馈 result 卡很久: 之前"先认黄色[ad_claim_pos] -> 没广告 -> 4s 撒手"流程
+        # 在广告额度用完时白白浪费一次战斗(点了黄色但 SDK 不发量, bot 还得等 4s 撒手).
+        # 现在: 紫色[点击继续]永远在画面里(底排固定), 优先认紫色; 命中就直接走, 省一次 4s 等待
+        # 和广告额度消耗. 紫色没命中(可能是动画帧/某种遮挡)再退回去尝试黄色[领取].
+        continue_pos = color_button(img, self.CONTINUE_BOX, self.CONTINUE_COLOR,
+                                    min_px=self.CONTINUE_MIN_PX)
+        if continue_pos is not None and not ctx.acted('result_continue'):
+            ctx.battles += 1
+            logging.info(f'[结算] 点色命中继续按钮 {continue_pos} (累计 {ctx.battles} 场)')
+            ctx.click(*continue_pos)
+            return True
+        # 紫色没命中(动画中/被遮), 退回去看黄色[领取]. 用户想看广告 + 还有额度才会走这条.
+        banner = ad_claim_pos(img) if WATCH_ADS else None
         if banner is not None and not ctx.acted('result_claim', self.CLAIM_GAP):
             logging.info(f'[结算] 点色命中[领取](看广告) {banner}')
             # 抢前台必须在点之前: 微信是在"点下去那一刻"决定给不给量的。
@@ -103,26 +113,11 @@ class ResultPage(Page):
             if fg:
                 fg('结算礼包[领取]')
             ctx.click(*banner)
-            # 只压[继续], 不开"不定页/零点击"的阻塞窗口: 广告来了会自己盖上黑屏,
-            # 那时按页面识别(auto_bot 黑屏 + ad_close_pos -> 才 arm 看广告窗口);
-            # 会员不弹广告, 点完 0.3s 就退回大厅, 硬等 100s 是纯浪费。
             self._claim_until = now + self.CLAIM_GRACE
             return True
         elif banner is None:
-            # 没认到横幅 != 一定没有横幅: --ad-probe 存帧, 事后肉眼复核(见 App.ad_probe_shot)
             shot = getattr(ctx, 'ad_probe_shot', None)
             if shot is not None:
-                shot(ctx.f.img, 'result')
-        # 2) 继续: 白字外接框中心(旧版要 OCR 认"点击继续", 还常被读成"点击维续")
-        #    横幅还在 = 广告可能正盖在这页加载中, 此刻点[继续]会把它作废 -> 压 CLAIM_GRACE 秒;
-        #    横幅没了 = 领取已到账, 立刻点[继续], 不干等。
-        if banner is not None and now < self._claim_until:
-            return False
-        pos = color_button(ctx.f.img, self.CONTINUE_BOX, self.CONTINUE_COLOR,
-                           min_px=self.CONTINUE_MIN_PX)
-        if pos is None or ctx.acted('result_continue'):
-            return False
-        ctx.battles += 1
-        logging.info(f'[结算] 点色命中继续按钮 {pos} (累计 {ctx.battles} 场)')
-        ctx.click(*pos)
-        return True
+                shot(img, 'result')
+        # 两者都没命中: 可能在动画帧或转场中, 等下一帧
+        return False
